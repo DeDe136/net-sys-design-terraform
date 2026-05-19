@@ -7,7 +7,7 @@ terraform {
     }
   }
 
-  # Uncomment and configure for remote state
+  # Uncomment và cấu hình để dùng remote state (khuyến nghị cho production)
   # backend "s3" {
   #   bucket         = "your-tfstate-bucket"
   #   key            = "aws-infra/terraform.tfstate"
@@ -19,6 +19,29 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+}
+
+# ─────────────────────────────────────────────────────────────────
+# Transit Gateway — phải tạo trước vì subnets cần tgw_id để tạo routes
+# ─────────────────────────────────────────────────────────────────
+module "transit_gateway" {
+  source = "./modules/transit_gateway"
+
+  prod_vpc_id            = module.prod_vpc.vpc_id
+  prod_private_subnet_ids = [
+    module.prod_subnets.private_subnet_1a_id,
+    module.prod_subnets.private_subnet_1b_id,
+  ]
+  rnd_vpc_id            = module.rnd_vpc.vpc_id
+  rnd_private_subnet_ids = [
+    module.rnd_subnets.private_subnet_1a_id,
+    module.rnd_subnets.private_subnet_1b_id,
+  ]
+
+  depends_on = [
+    module.prod_vpc,
+    module.rnd_vpc,
+  ]
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -41,12 +64,14 @@ module "prod_subnets" {
   db_subnet_1a_cidr      = var.prod_db_subnet_1a_cidr
   db_subnet_1b_cidr      = var.prod_db_subnet_1b_cidr
 
-  az_1a       = "${var.aws_region}a"
-  az_1b       = "${var.aws_region}b"
-  name_prefix = "prod"
-  igw_id      = module.prod_vpc.igw_id
-  tgw_id      = module.transit_gateway.tgw_id
+  az_1a           = "${var.aws_region}a"
+  az_1b           = "${var.aws_region}b"
+  name_prefix     = "prod"
+  igw_id          = module.prod_vpc.igw_id
+  tgw_id          = module.transit_gateway.tgw_id
   remote_vpc_cidr = var.rnd_vpc_cidr
+
+  depends_on = [module.transit_gateway]
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -69,57 +94,41 @@ module "rnd_subnets" {
   db_subnet_1a_cidr      = null
   db_subnet_1b_cidr      = null
 
-  az_1a       = "${var.aws_region}a"
-  az_1b       = "${var.aws_region}b"
-  name_prefix = "rnd"
-  igw_id      = module.rnd_vpc.igw_id
-  tgw_id      = module.transit_gateway.tgw_id
+  az_1a           = "${var.aws_region}a"
+  az_1b           = "${var.aws_region}b"
+  name_prefix     = "rnd"
+  igw_id          = module.rnd_vpc.igw_id
+  tgw_id          = module.transit_gateway.tgw_id
   remote_vpc_cidr = var.prod_vpc_cidr
-}
 
-# ─────────────────────────────────────────────────────────────────
-# Transit Gateway (kết nối Prod ↔ R&D ↔ VPN)
-# ─────────────────────────────────────────────────────────────────
-module "transit_gateway" {
-  source = "./modules/transit_gateway"
-
-  prod_vpc_id            = module.prod_vpc.vpc_id
-  prod_private_subnet_ids = [
-    module.prod_subnets.private_subnet_1a_id,
-    module.prod_subnets.private_subnet_1b_id,
-  ]
-  rnd_vpc_id            = module.rnd_vpc.vpc_id
-  rnd_private_subnet_ids = [
-    module.rnd_subnets.private_subnet_1a_id,
-    module.rnd_subnets.private_subnet_1b_id,
-  ]
+  depends_on = [module.transit_gateway]
 }
 
 # ─────────────────────────────────────────────────────────────────
 # Security Groups
 # ─────────────────────────────────────────────────────────────────
 module "prod_security_groups" {
-  source  = "./modules/security_groups"
-  vpc_id  = module.prod_vpc.vpc_id
-  env     = "prod"
-  vpn_cidr = var.vpn_client_cidr
+  source       = "./modules/security_groups"
+  vpc_id       = module.prod_vpc.vpc_id
+  env          = "prod"
+  vpn_cidr     = var.vpn_client_cidr
   rnd_vpc_cidr = var.rnd_vpc_cidr
 }
 
 module "rnd_security_groups" {
-  source  = "./modules/security_groups"
-  vpc_id  = module.rnd_vpc.vpc_id
-  env     = "rnd"
-  vpn_cidr = var.vpn_client_cidr
+  source       = "./modules/security_groups"
+  vpc_id       = module.rnd_vpc.vpc_id
+  env          = "rnd"
+  vpn_cidr     = var.vpn_client_cidr
   rnd_vpc_cidr = var.rnd_vpc_cidr
 }
 
 # ─────────────────────────────────────────────────────────────────
-# Application Load Balancer (Production)
+# Application Load Balancer (Production only)
 # ─────────────────────────────────────────────────────────────────
 module "prod_alb" {
-  source          = "./modules/alb"
-  vpc_id          = module.prod_vpc.vpc_id
+  source = "./modules/alb"
+  vpc_id = module.prod_vpc.vpc_id
   public_subnet_ids = [
     module.prod_subnets.public_subnet_1a_id,
     module.prod_subnets.public_subnet_1b_id,
@@ -161,7 +170,7 @@ module "prod_ec2" {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# EC2 — R&D Testing (fixed instances, không ASG)
+# EC2 — R&D Testing (4 instances mỗi AZ, không ASG)
 # ─────────────────────────────────────────────────────────────────
 module "rnd_ec2" {
   source        = "./modules/ec2"
@@ -169,10 +178,17 @@ module "rnd_ec2" {
   ami           = var.ec2_ami
   instance_type = var.ec2_instance_type
 
-  rnd_subnet_2a_id  = module.rnd_subnets.private_subnet_1a_id
-  rnd_subnet_2b_id  = module.rnd_subnets.private_subnet_1b_id
-  sg_rnd_id         = module.rnd_security_groups.sg_rnd_ec2_id
+  rnd_subnet_2a_id          = module.rnd_subnets.private_subnet_1a_id
+  rnd_subnet_2b_id          = module.rnd_subnets.private_subnet_1b_id
+  sg_rnd_id                 = module.rnd_security_groups.sg_rnd_ec2_id
   rnd_instance_count_per_az = 4
+
+  asg_web_min     = var.asg_web_min
+  asg_web_max     = var.asg_web_max
+  asg_web_desired = var.asg_web_desired
+  asg_erp_min     = var.asg_erp_min
+  asg_erp_max     = var.asg_erp_max
+  asg_erp_desired = var.asg_erp_desired
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -195,6 +211,26 @@ module "prod_rds" {
 }
 
 # ─────────────────────────────────────────────────────────────────
+# Directory Service — AWS Managed Microsoft AD (Production)
+# Deployed vào DB subnets (AZ-1a + AZ-1b) để tách biệt
+# ─────────────────────────────────────────────────────────────────
+module "prod_directory_service" {
+  source = "./modules/directory_service"
+
+  name    = "ds-prod"
+  vpc_id  = module.prod_vpc.vpc_id
+  subnet_ids = [
+    module.prod_subnets.db_subnet_1a_id,
+    module.prod_subnets.db_subnet_1b_id,
+  ]
+
+  directory_name       = var.ds_directory_name
+  directory_short_name = var.ds_directory_short_name
+  directory_password   = var.ds_directory_password
+  edition              = var.ds_edition
+}
+
+# ─────────────────────────────────────────────────────────────────
 # EFS — R&D Project Data
 # ─────────────────────────────────────────────────────────────────
 module "rnd_efs" {
@@ -209,37 +245,51 @@ module "rnd_efs" {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# S3 Bucket + VPC Gateway Endpoints
+# S3 VPC Gateway Endpoints (phải tạo trước S3 bucket policy)
 # ─────────────────────────────────────────────────────────────────
-module "s3" {
-  source      = "./modules/s3"
-  bucket_name = var.s3_bucket_name
-}
-
 module "prod_s3_endpoint" {
-  source         = "./modules/endpoints"
-  vpc_id         = module.prod_vpc.vpc_id
+  source = "./modules/endpoints"
+  vpc_id = module.prod_vpc.vpc_id
   route_table_ids = [
     module.prod_subnets.private_rt_1a_id,
     module.prod_subnets.private_rt_1b_id,
+    module.prod_subnets.public_rt_id,
   ]
   aws_region = var.aws_region
   name       = "vpce-prod-s3"
 }
 
 module "rnd_s3_endpoint" {
-  source         = "./modules/endpoints"
-  vpc_id         = module.rnd_vpc.vpc_id
+  source = "./modules/endpoints"
+  vpc_id = module.rnd_vpc.vpc_id
   route_table_ids = [
     module.rnd_subnets.private_rt_1a_id,
     module.rnd_subnets.private_rt_1b_id,
+    module.rnd_subnets.public_rt_id,
   ]
   aws_region = var.aws_region
   name       = "vpce-rnd-s3"
 }
 
 # ─────────────────────────────────────────────────────────────────
-# Client VPN (Remote Staff → Transit Gateway)
+# S3 Bucket + Bucket Policy (restrict access via VPC Endpoints only)
+# ─────────────────────────────────────────────────────────────────
+module "s3" {
+  source      = "./modules/s3"
+  bucket_name = var.s3_bucket_name
+  vpc_endpoint_ids = [
+    module.prod_s3_endpoint.endpoint_id,
+    module.rnd_s3_endpoint.endpoint_id,
+  ]
+
+  depends_on = [
+    module.prod_s3_endpoint,
+    module.rnd_s3_endpoint,
+  ]
+}
+
+# ─────────────────────────────────────────────────────────────────
+# Client VPN (Remote Staff → Transit Gateway → Prod/R&D VPCs)
 # ─────────────────────────────────────────────────────────────────
 module "client_vpn" {
   source           = "./modules/vpn"
@@ -247,4 +297,7 @@ module "client_vpn" {
   target_subnet_id = module.prod_subnets.private_subnet_1a_id
   vpc_id           = module.prod_vpc.vpc_id
   name             = "client-vpn-prod"
+
+  server_certificate_arn = var.vpn_server_certificate_arn
+  client_certificate_arn = var.vpn_client_certificate_arn
 }

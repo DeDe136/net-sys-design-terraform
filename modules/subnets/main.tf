@@ -63,12 +63,14 @@ resource "aws_nat_gateway" "nat_1a" {
   allocation_id = aws_eip.nat_1a.id
   subnet_id     = aws_subnet.public_1a.id
   tags          = { Name = "nat-${var.name_prefix}-1a" }
+  depends_on    = [aws_eip.nat_1a]
 }
 
 resource "aws_nat_gateway" "nat_1b" {
   allocation_id = aws_eip.nat_1b.id
   subnet_id     = aws_subnet.public_1b.id
   tags          = { Name = "nat-${var.name_prefix}-1b" }
+  depends_on    = [aws_eip.nat_1b]
 }
 
 # ── Route Tables ─────────────────────────────────────────────────
@@ -133,4 +135,25 @@ resource "aws_route_table" "private_1b" {
 resource "aws_route_table_association" "private_1b" {
   subnet_id      = aws_subnet.private_1b.id
   route_table_id = aws_route_table.private_1b.id
+}
+
+# ── DB Route Table (Production only) ─────────────────────────────
+# DB subnets chỉ cần route nội bộ, KHÔNG ra NAT / Internet
+resource "aws_route_table" "db" {
+  count  = (var.db_subnet_1a_cidr != null && var.db_subnet_1b_cidr != null) ? 1 : 0
+  vpc_id = var.vpc_id
+  tags   = { Name = "rt-${var.name_prefix}-db" }
+  # Không có default route ra ngoài — DB subnet isolated
+}
+
+resource "aws_route_table_association" "db_1a" {
+  count          = length(aws_subnet.db_1a)
+  subnet_id      = aws_subnet.db_1a[0].id
+  route_table_id = aws_route_table.db[0].id
+}
+
+resource "aws_route_table_association" "db_1b" {
+  count          = length(aws_subnet.db_1b)
+  subnet_id      = aws_subnet.db_1b[0].id
+  route_table_id = aws_route_table.db[0].id
 }

@@ -31,7 +31,20 @@ variable "rds_engine_version" { type = string }
 variable "rds_instance_class" { type = string }
 variable "rds_db_name"        { type = string }
 variable "rds_username"       { type = string }
-variable "rds_password"       { type = string; sensitive = true }
+variable "rds_password" {
+  type      = string
+  sensitive = true
+}
 
 variable "vpn_client_cidr" { type = string }
+variable "vpn_server_certificate_arn" { type = string }
+variable "vpn_client_certificate_arn" { type = string }
 variable "s3_bucket_name"  { type = string }
+
+variable "ds_directory_name" { type = string }
+variable "ds_directory_short_name" { type = string }
+variable "ds_directory_password" {
+  type      = string
+  sensitive = true
+}
+variable "ds_edition" { type = string }
