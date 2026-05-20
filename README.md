@@ -375,9 +375,29 @@ modules/  global/  environments/  scripts/
 
 IAM roles và instance profiles được tách riêng vào `global/iam.tf` để tránh bị tạo lại mỗi lần apply ở root module. Đây là bước **bắt buộc** trước khi deploy hạ tầng chính vì EC2 cần `ec2-instance-profile` để SSM Session Manager và S3 access hoạt động.
 
+> **Lưu ý:** `global/` là một root module **riêng biệt** — nó không kế thừa `providers.tf` từ thư mục gốc, nên bạn phải truyền credentials khi chạy. Chọn **1 trong 3 cách** bên dưới tùy phương thức xác thực bạn đang dùng.
+
 ```bash
 cd global
 terraform init
+```
+
+**Cách 1 — Named Profile** (khuyến nghị cho local dev, tương ứng phương thức 1 trong `secret.tfvars`):
+
+```bash
+terraform apply -var="aws_profile=my-project"
+```
+
+**Cách 2 — Dùng lại `secret.tfvars` từ thư mục gốc** (tiện nhất nếu đã điền sẵn):
+
+```bash
+terraform apply -var-file="../secret.tfvars"
+```
+
+**Cách 3 — Environment Variables** (phương thức 4, không cần truyền `-var` gì thêm):
+
+```bash
+# Đã export sẵn AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
 terraform apply
 ```
 
@@ -388,6 +408,8 @@ Sau khi apply xong, quay về thư mục gốc:
 ```bash
 cd ..
 ```
+
+> **Kiểm tra:** Vào AWS Console → IAM → Roles → tìm `ec2-instance-role`. Vào Instance Profiles → tìm `ec2-instance-profile`.
 
 > **Kiểm tra:** Vào AWS Console → IAM → Roles → tìm `ec2-ssm-s3-role` và `client-vpn-cloudwatch-role`. Vào Instance Profiles → tìm `ec2-instance-profile`.
 
