@@ -25,6 +25,16 @@ else
   : "${TF_VAR_ds_directory_password:?'ERROR: ds_directory_password chưa được set'}"
 fi
 
+# Xử lý cờ enable_tgw_routes từ tham số dòng lệnh
+ENABLE_TGW="${1:-}"
+if [[ "$ENABLE_TGW" == "true" ]]; then
+  echo "➜ Kích hoạt Transit Gateway routes (enable_tgw_routes=true)"
+  VAR_ARGS="$VAR_ARGS -var=enable_tgw_routes=true"
+elif [[ "$ENABLE_TGW" == "false" ]]; then
+  echo "➜ Tắt Transit Gateway routes (enable_tgw_routes=false)"
+  VAR_ARGS="$VAR_ARGS -var=enable_tgw_routes=false"
+fi
+
 cd "$ROOT_DIR"
 terraform fmt -recursive
 terraform validate

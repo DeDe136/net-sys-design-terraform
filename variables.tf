@@ -132,3 +132,35 @@ variable "s3_bucket_name" {
   type        = string
   description = "Globally unique S3 bucket name cho shared storage"
 }
+
+# ── TGW Dedicated Subnets (/28) ───────────────────────────────────
+# FIX 2: Dedicated subnets cho TGW ENI, tách riêng khỏi EC2 private subnets.
+# Chọn CIDR /28 (16 IPs) — đủ cho TGW ENI mỗi AZ, không conflict với
+# các dải subnet hiện tại trong Prod (10.0.1-3.x) và R&D (10.1.1-2.x).
+variable "prod_tgw_subnet_1a_cidr" {
+  type        = string
+  description = "CIDR /28 cho TGW dedicated subnet AZ-1a của Prod VPC. Ví dụ: 10.0.4.0/28"
+}
+variable "prod_tgw_subnet_1b_cidr" {
+  type        = string
+  description = "CIDR /28 cho TGW dedicated subnet AZ-1b của Prod VPC. Ví dụ: 10.0.4.16/28"
+}
+variable "rnd_tgw_subnet_2a_cidr" {
+  type        = string
+  description = "CIDR /28 cho TGW dedicated subnet AZ-2a của R&D VPC. Ví dụ: 10.1.3.0/28"
+}
+variable "rnd_tgw_subnet_2b_cidr" {
+  type        = string
+  description = "CIDR /28 cho TGW dedicated subnet AZ-2b của R&D VPC. Ví dụ: 10.1.3.16/28"
+}
+
+# ── TGW Route Flag ────────────────────────────────────────────────
+# FIX 1: Thay thế cơ chế truyền tgw_attachment_ids động (gây circular dep).
+# Workflow 2 lần apply:
+#   Lần 1: enable_tgw_routes = false → apply (tạo VPC, TGW, Subnets, Attachments)
+#   Lần 2: enable_tgw_routes = true  → apply (tạo aws_route TGW trong private RTs)
+variable "enable_tgw_routes" {
+  type        = bool
+  default     = false
+  description = "false = lần apply đầu (attachment chưa có). true = lần apply thứ 2 để tạo TGW routes."
+}

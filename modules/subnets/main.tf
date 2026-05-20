@@ -47,6 +47,26 @@ resource "aws_subnet" "db_1b" {
   tags = { Name = "${var.name_prefix}-db-1b" }
 }
 
+# ── Dedicated TGW Subnets (/28) ───────────────────────────────────
+# Tách riêng khỏi EC2 private subnet theo AWS best practice.
+# TGW ENI sẽ được đặt vào đây thay vì dùng chung private subnet.
+# /28 (16 IPs) đủ cho TGW ENI per AZ.
+resource "aws_subnet" "tgw_1a" {
+  count             = var.tgw_subnet_1a_cidr != null ? 1 : 0
+  vpc_id            = var.vpc_id
+  cidr_block        = var.tgw_subnet_1a_cidr
+  availability_zone = var.az_1a
+  tags = { Name = "${var.name_prefix}-tgw-1a" }
+}
+
+resource "aws_subnet" "tgw_1b" {
+  count             = var.tgw_subnet_1b_cidr != null ? 1 : 0
+  vpc_id            = var.vpc_id
+  cidr_block        = var.tgw_subnet_1b_cidr
+  availability_zone = var.az_1b
+  tags = { Name = "${var.name_prefix}-tgw-1b" }
+}
+
 # ── Elastic IPs for NAT ───────────────────────────────────────────
 resource "aws_eip" "nat_1a" {
   domain = "vpc"
@@ -96,9 +116,9 @@ resource "aws_route_table_association" "public_1b" {
 }
 
 # Private RT AZ-1a → NAT only
-# FIX: Không đặt route TGW inline trong aws_route_table.
-# AWS validate attachment ngay lúc tạo route — nếu attachment chưa có → lỗi.
-# Route TGW được tạo riêng bên dưới bằng aws_route với count guard.
+# Route TGW KHÔNG đặt inline ở đây — tạo riêng bằng aws_route trong root
+# main.tf SAU KHI TGW attachment đã hoàn tất (tránh circular dependency
+# subnets ↔ tgw_attachments và lỗi AWS API validate attachment chưa tồn tại).
 resource "aws_route_table" "private_1a" {
   vpc_id = var.vpc_id
   tags   = { Name = "rt-${var.name_prefix}-private-1a" }
@@ -130,12 +150,12 @@ resource "aws_route_table_association" "private_1b" {
   route_table_id = aws_route_table.private_1b.id
 }
 
-# ── TGW Routes — tạo SAU KHI attachment đã hoàn tất ─────────────
-# count = 0 khi tgw_attachment_ids rỗng (Phase 3, attachment chưa có).
-# count = 1 sau Phase 4 khi root module truyền attachment IDs vào.
-# Terraform detect thay đổi count và tạo route trong cùng 1 lần apply.
+# ── TGW Routes — controlled bằng enable_tgw_routes flag ──────────
+# Tạo SAU KHI TGW attachments đã hoàn tất (lần apply thứ 2).
+# Không còn phụ thuộc vào tgw_attachment_ids từ module tgw_attachments
+# → không còn circular dependency.
 resource "aws_route" "private_1a_tgw" {
-  count                  = length(var.tgw_attachment_ids) > 0 ? 1 : 0
+  count                  = var.enable_tgw_routes ? 1 : 0
   route_table_id         = aws_route_table.private_1a.id
   destination_cidr_block = var.remote_vpc_cidr
   transit_gateway_id     = var.tgw_id
@@ -143,20 +163,42 @@ resource "aws_route" "private_1a_tgw" {
 }
 
 resource "aws_route" "private_1b_tgw" {
-  count                  = length(var.tgw_attachment_ids) > 0 ? 1 : 0
+  count                  = var.enable_tgw_routes ? 1 : 0
   route_table_id         = aws_route_table.private_1b.id
   destination_cidr_block = var.remote_vpc_cidr
   transit_gateway_id     = var.tgw_id
   depends_on             = [aws_route_table.private_1b]
 }
 
+# ── TGW Subnet Route Table ────────────────────────────────────────
+# Dedicated RT cho TGW subnets — không cần route ra ngoài,
+# chỉ cần local VPC route (tự động có sẵn trong AWS).
+resource "aws_route_table" "tgw" {
+  count  = (var.tgw_subnet_1a_cidr != null && var.tgw_subnet_1b_cidr != null) ? 1 : 0
+  vpc_id = var.vpc_id
+  tags   = { Name = "rt-${var.name_prefix}-tgw" }
+  # Không có default route ra ngoài — TGW subnet isolated
+}
+
+resource "aws_route_table_association" "tgw_1a" {
+  count          = length(aws_subnet.tgw_1a)
+  subnet_id      = aws_subnet.tgw_1a[0].id
+  route_table_id = aws_route_table.tgw[0].id
+}
+
+resource "aws_route_table_association" "tgw_1b" {
+  count          = length(aws_subnet.tgw_1b)
+  subnet_id      = aws_subnet.tgw_1b[0].id
+  route_table_id = aws_route_table.tgw[0].id
+}
+
 # ── DB Route Table (Production only) ─────────────────────────────
-# DB subnets chỉ cần route nội bộ, KHÔNG ra NAT / Internet
+# DB subnets chỉ cần local route — không ra NAT / Internet.
+# Local route (10.0.0.0/16 → local) tự động có sẵn trong mọi RT của AWS.
 resource "aws_route_table" "db" {
   count  = (var.db_subnet_1a_cidr != null && var.db_subnet_1b_cidr != null) ? 1 : 0
   vpc_id = var.vpc_id
   tags   = { Name = "rt-${var.name_prefix}-db" }
-  # Không có default route ra ngoài — DB subnet isolated
 }
 
 resource "aws_route_table_association" "db_1a" {

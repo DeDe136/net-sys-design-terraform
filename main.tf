@@ -1,21 +1,39 @@
 # ──────────────────────────────────────────────────────────────────
 # main.tf  —  Root module
 #
-# Thứ tự dependency:
+# Thứ tự dependency (2 lần apply):
+#
+# APPLY LẦN 1 — tạo hạ tầng cơ bản:
 #   Phase 1: VPCs
 #   Phase 2: Transit Gateway (chỉ tạo TGW, KHÔNG tạo attachments)
-#   Phase 3: Subnets — tgw_attachment_ids=[] nên aws_route TGW chưa tạo
-#   Phase 4: TGW Attachments (dùng private subnet IDs từ Phase 3)
-#   Phase 4.5: prod_subnets + rnd_subnets refresh với tgw_attachment_ids
-#              đã có → aws_route TGW được tạo (count 0→1)
+#   Phase 3: Subnets (enable_tgw_routes=false → aws_route TGW chưa tạo)
+#   Phase 4: TGW Attachments — dùng dedicated TGW subnets (/28)
+#            thay vì EC2 private subnets (AWS best practice)
 #   Phase 5: Security Groups, ALB, EC2, RDS, DS, EFS, S3, VPN
 #
-# FIX 1 (TGW race condition):
-#   Route TGW KHÔNG đặt inline trong aws_route_table — AWS validate
-#   attachment ngay lúc tạo route. Thay bằng aws_route riêng biệt
-#   với count = length(tgw_attachment_ids) > 0.
+# APPLY LẦN 2 — bật TGW routes:
+#   Đổi enable_tgw_routes = true trong terraform.tfvars → apply lại.
+#   Lúc này aws_route TGW được tạo trong private RT của cả Prod và R&D.
 #
-# FIX 2 (TGW duplicate):
+# Lý do cần 2 lần apply:
+#   Nếu prod_subnets/rnd_subnets tham chiếu output của tgw_attachments,
+#   và tgw_attachments tham chiếu subnet IDs từ prod_subnets/rnd_subnets
+#   → Terraform báo CIRCULAR DEPENDENCY và từ chối plan.
+#   Giải pháp: tách bằng flag enable_tgw_routes thay vì truyền attachment
+#   IDs động giữa các module.
+#
+# FIX 1 (Circular dependency):
+#   Xóa tgw_attachment_ids khỏi module subnets.
+#   Thay bằng variable enable_tgw_routes (bool) — set false lần 1,
+#   set true lần 2 sau khi attachments đã tạo xong.
+#   aws_route TGW được tạo trực tiếp trong module subnets dựa vào flag này.
+#
+# FIX 2 (TGW dedicated subnets):
+#   TGW attachments nay dùng dedicated /28 subnets (tgw_subnet_1a/1b)
+#   thay vì EC2 private subnets. Theo AWS best practice, TGW ENI nên
+#   nằm trong subnet riêng để tránh conflict routing và dễ quản lý ACL.
+#
+# FIX 3 (TGW duplicate — giữ nguyên từ trước):
 #   Transit Gateway chỉ tạo 1 lần (create_tgw=true ở Phase 2).
 #   Phase 4 dùng create_tgw=false + existing_tgw_id để chỉ tạo
 #   attachments mà KHÔNG tạo TGW mới.
@@ -51,8 +69,13 @@ module "transit_gateway" {
 
 # ─────────────────────────────────────────────────────────────────
 # Phase 3: Subnets
-# tgw_attachment_ids=[] → aws_route TGW chưa tạo (count=0).
-# Sau Phase 4, Terraform truyền attachment IDs vào → count=1 → route được tạo.
+#
+# enable_tgw_routes = false (lần apply đầu) → aws_route TGW chưa tạo.
+# Sau khi Phase 4 chạy xong, đổi enable_tgw_routes = true trong
+# terraform.tfvars rồi apply lại để tạo route.
+#
+# KHÔNG còn tham chiếu module.tgw_attachments ở đây
+# → không còn circular dependency.
 # ─────────────────────────────────────────────────────────────────
 module "prod_subnets" {
   source = "./modules/subnets"
@@ -65,6 +88,10 @@ module "prod_subnets" {
   db_subnet_1a_cidr      = var.prod_db_subnet_1a_cidr
   db_subnet_1b_cidr      = var.prod_db_subnet_1b_cidr
 
+  # FIX 2: Dedicated TGW subnets /28 — TGW ENI đặt ở đây, không dùng private subnet
+  tgw_subnet_1a_cidr = var.prod_tgw_subnet_1a_cidr
+  tgw_subnet_1b_cidr = var.prod_tgw_subnet_1b_cidr
+
   az_1a           = "${var.aws_region}a"
   az_1b           = "${var.aws_region}b"
   name_prefix     = "prod"
@@ -72,11 +99,10 @@ module "prod_subnets" {
   tgw_id          = module.transit_gateway.tgw_id
   remote_vpc_cidr = var.rnd_vpc_cidr
 
-  # compact() lọc null — rỗng khi Phase 4 chưa chạy, có giá trị sau đó
-  tgw_attachment_ids = compact([
-    module.tgw_attachments.tgw_attach_prod_id,
-    module.tgw_attachments.tgw_attach_rnd_id,
-  ])
+  # FIX 1: Dùng flag thay vì truyền attachment IDs động
+  # Lần 1: false (attachment chưa có) → route chưa tạo
+  # Lần 2: true  (attachment đã có)  → route được tạo
+  enable_tgw_routes = var.enable_tgw_routes
 
   depends_on = [module.transit_gateway]
 }
@@ -92,6 +118,10 @@ module "rnd_subnets" {
   db_subnet_1a_cidr      = null
   db_subnet_1b_cidr      = null
 
+  # FIX 2: Dedicated TGW subnets /28 cho R&D VPC
+  tgw_subnet_1a_cidr = var.rnd_tgw_subnet_2a_cidr
+  tgw_subnet_1b_cidr = var.rnd_tgw_subnet_2b_cidr
+
   az_1a           = "${var.aws_region}a"
   az_1b           = "${var.aws_region}b"
   name_prefix     = "rnd"
@@ -99,34 +129,38 @@ module "rnd_subnets" {
   tgw_id          = module.transit_gateway.tgw_id
   remote_vpc_cidr = var.prod_vpc_cidr
 
-  tgw_attachment_ids = compact([
-    module.tgw_attachments.tgw_attach_prod_id,
-    module.tgw_attachments.tgw_attach_rnd_id,
-  ])
+  enable_tgw_routes = var.enable_tgw_routes
 
   depends_on = [module.transit_gateway]
 }
 
 # ─────────────────────────────────────────────────────────────────
 # Phase 4: TGW Attachments (sau khi subnets đã tạo xong)
-# FIX: Dùng create_tgw=false + existing_tgw_id thay vì gọi module
-#      riêng biệt (sẽ tạo TGW mới — BUG).
+#
+# FIX 2: Dùng dedicated TGW subnets (/28) thay vì EC2 private subnets.
+#   - Tránh TGW ENI chiếm IP trong dải EC2
+#   - Dễ apply Network ACL riêng cho TGW traffic
+#   - Đúng AWS best practice cho Transit Gateway deployment
+#
+# FIX 3 (giữ nguyên): Dùng create_tgw=false + existing_tgw_id
+#   để chỉ tạo attachments mà KHÔNG tạo TGW mới.
 # ─────────────────────────────────────────────────────────────────
 module "tgw_attachments" {
   source          = "./modules/transit_gateway"
-  create_tgw      = false                           # KHÔNG tạo TGW mới
+  create_tgw      = false                          # KHÔNG tạo TGW mới
   existing_tgw_id = module.transit_gateway.tgw_id  # Dùng TGW đã tạo ở Phase 2
   prod_vpc_id     = module.prod_vpc.vpc_id
   rnd_vpc_id      = module.rnd_vpc.vpc_id
 
-  prod_private_subnet_ids = [
-    module.prod_subnets.private_subnet_1a_id,
-    module.prod_subnets.private_subnet_1b_id,
-  ]
-  rnd_private_subnet_ids = [
-    module.rnd_subnets.private_subnet_1a_id,
-    module.rnd_subnets.private_subnet_1b_id,
-  ]
+  # FIX 2: Dùng dedicated TGW subnets thay vì private_subnet_1a/1b
+  prod_private_subnet_ids = compact([
+    module.prod_subnets.tgw_subnet_1a_id,
+    module.prod_subnets.tgw_subnet_1b_id,
+  ])
+  rnd_private_subnet_ids = compact([
+    module.rnd_subnets.tgw_subnet_1a_id,
+    module.rnd_subnets.tgw_subnet_1b_id,
+  ])
 
   depends_on = [module.prod_subnets, module.rnd_subnets]
 }
@@ -312,7 +346,7 @@ module "s3" {
 
 # ─────────────────────────────────────────────────────────────────
 # Client VPN (Remote Staff → Transit Gateway → Prod/R&D VPCs)
-# FIX: Associate VPN với 2 subnet (AZ-1a + AZ-1b) để HA
+# Associate VPN với 2 subnet (AZ-1a + AZ-1b) để HA
 #
 # ⚠ CHƯA ENABLE: cần ACM certificates trước khi bỏ comment
 # Bước 1: chạy scripts/generate_vpn_certs.sh

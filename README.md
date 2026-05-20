@@ -419,7 +419,7 @@ vpn_server_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxx
 vpn_client_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/yyy"
 ```
 
-> Nếu chưa cần VPN: comment out `module "client_vpn"` trong `main.tf` và bỏ qua bước này.
+> Nếu chưa cần VPN: comment out `module "client_vpn"` trong `main.tf`, và vpn `client_vpn` trong `outputs.tf`, sau đó bỏ qua bước này.
 
 ### Bước 5 — Chuẩn bị secret.tfvars
 
@@ -450,25 +450,46 @@ ds_directory_password = "YourADPassword123@"
 
 ### Bước 6 — Set biến nhạy cảm
 
-### Bước 7 — Init, Plan, Apply
+### Bước 7 — Init, Plan, Apply (2 Giai đoạn)
+
+Do Transit Gateway và Route Tables có sự phụ thuộc vòng (circular dependency), việc triển khai cần được thực hiện qua 2 giai đoạn (2 lần apply).
+
+#### Giai đoạn 1: Khởi tạo hạ tầng & TGW Attachments
+Ở bước này, chúng ta giữ `enable_tgw_routes = false` (mặc định trong `terraform.tfvars`) để tạo VPC, Subnets và kết nối chúng vào Transit Gateway.
 
 ```bash
-# Init (chỉ cần chạy lần đầu hoặc sau khi thêm module)
+# 1. Init (chỉ cần chạy lần đầu hoặc sau khi thêm module)
 terraform init
 
-# Validate + format + plan (dùng script có sẵn — tự load secret.tfvars)
+# 2. Plan giai đoạn 1 (enable_tgw_routes mặc định là false)
 bash scripts/plan.sh
 
-# Xem kỹ plan output, sau đó apply
+# 3. Apply giai đoạn 1
 terraform apply tfplan
 ```
+
+#### Giai đoạn 2: Cấu hình Routing liên VPC
+Sau khi hạ tầng cơ bản đã sẵn sàng, chúng ta kích hoạt việc tạo các route trong Route Tables để traffic có thể đi qua Transit Gateway.
+
+```bash
+# 1. Plan giai đoạn 2 (ghi đè biến enable_tgw_routes thành true)
+bash scripts/plan.sh true
+
+# 2. Apply giai đoạn 2
+terraform apply tfplan
+```
+
+> **Lưu ý:** Bạn cũng có thể sửa trực tiếp `enable_tgw_routes = true` trong file `terraform.tfvars` rồi chạy `bash scripts/plan.sh` nếu không muốn dùng tham số dòng lệnh.
 
 Hoặc apply trực tiếp (không qua script):
 
 ```bash
-terraform fmt -recursive
-terraform validate
-terraform plan  -var-file="secret.tfvars" -out=tfplan
+# Lần 1
+terraform plan -var-file="secret.tfvars" -var="enable_tgw_routes=false" -out=tfplan
+terraform apply tfplan
+
+# Lần 2
+terraform plan -var-file="secret.tfvars" -var="enable_tgw_routes=true" -out=tfplan
 terraform apply tfplan
 ```
 

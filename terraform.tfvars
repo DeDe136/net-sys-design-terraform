@@ -63,3 +63,19 @@ vpn_client_cidr = "172.16.0.0/22"
 # ── S3 ────────────────────────────────────────────────────────────
 # Phải globally unique — thay <account_id> bằng AWS account ID thực tế
 s3_bucket_name = "s3-prod-shared-<account_id>"
+
+# ── TGW Dedicated Subnets (/28) ───────────────────────────────────
+# FIX 2: Tách riêng khỏi EC2 private subnets theo AWS best practice.
+# Prod VPC (10.0.0.0/16): dùng 10.0.4.0/27 chia đôi thành 2 /28
+prod_tgw_subnet_1a_cidr = "10.0.4.0/28"   # 10.0.4.0  – 10.0.4.15  → AZ-1a
+prod_tgw_subnet_1b_cidr = "10.0.4.16/28"  # 10.0.4.16 – 10.0.4.31  → AZ-1b
+
+# R&D VPC (10.1.0.0/16): dùng 10.1.3.0/27 chia đôi thành 2 /28
+rnd_tgw_subnet_2a_cidr = "10.1.3.0/28"    # 10.1.3.0  – 10.1.3.15  → AZ-2a
+rnd_tgw_subnet_2b_cidr = "10.1.3.16/28"   # 10.1.3.16 – 10.1.3.31  → AZ-2b
+
+# ── TGW Route Flag ────────────────────────────────────────────────
+# FIX 1: Workflow 2 lần apply để tránh circular dependency.
+# Lần 1 apply: giữ false → tạo hạ tầng + TGW attachments
+# Lần 2 apply: đổi thành true → tạo aws_route TGW trong private route tables
+enable_tgw_routes = false
