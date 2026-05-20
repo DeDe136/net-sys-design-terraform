@@ -4,14 +4,21 @@
 # Thứ tự dependency:
 #   Phase 1: VPCs
 #   Phase 2: Transit Gateway (chỉ tạo TGW, KHÔNG tạo attachments)
-#   Phase 3: Subnets (dùng tgw_id để khai báo routes trong route tables)
+#   Phase 3: Subnets — tgw_attachment_ids=[] nên aws_route TGW chưa tạo
 #   Phase 4: TGW Attachments (dùng private subnet IDs từ Phase 3)
+#   Phase 4.5: prod_subnets + rnd_subnets refresh với tgw_attachment_ids
+#              đã có → aws_route TGW được tạo (count 0→1)
 #   Phase 5: Security Groups, ALB, EC2, RDS, DS, EFS, S3, VPN
 #
-# BUG FIX: Transit Gateway chỉ được tạo 1 lần duy nhất.
-# Phase 2 dùng create_tgw=true để tạo TGW resource.
-# Phase 4 dùng create_tgw=false + existing_tgw_id để chỉ tạo attachments
-# mà KHÔNG tạo TGW mới.
+# FIX 1 (TGW race condition):
+#   Route TGW KHÔNG đặt inline trong aws_route_table — AWS validate
+#   attachment ngay lúc tạo route. Thay bằng aws_route riêng biệt
+#   với count = length(tgw_attachment_ids) > 0.
+#
+# FIX 2 (TGW duplicate):
+#   Transit Gateway chỉ tạo 1 lần (create_tgw=true ở Phase 2).
+#   Phase 4 dùng create_tgw=false + existing_tgw_id để chỉ tạo
+#   attachments mà KHÔNG tạo TGW mới.
 # ──────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────
@@ -43,7 +50,9 @@ module "transit_gateway" {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# Phase 3: Subnets (route tables tham chiếu tgw_id từ Phase 2)
+# Phase 3: Subnets
+# tgw_attachment_ids=[] → aws_route TGW chưa tạo (count=0).
+# Sau Phase 4, Terraform truyền attachment IDs vào → count=1 → route được tạo.
 # ─────────────────────────────────────────────────────────────────
 module "prod_subnets" {
   source = "./modules/subnets"
@@ -62,6 +71,12 @@ module "prod_subnets" {
   igw_id          = module.prod_vpc.igw_id
   tgw_id          = module.transit_gateway.tgw_id
   remote_vpc_cidr = var.rnd_vpc_cidr
+
+  # compact() lọc null — rỗng khi Phase 4 chưa chạy, có giá trị sau đó
+  tgw_attachment_ids = compact([
+    module.tgw_attachments.tgw_attach_prod_id,
+    module.tgw_attachments.tgw_attach_rnd_id,
+  ])
 
   depends_on = [module.transit_gateway]
 }
@@ -83,6 +98,11 @@ module "rnd_subnets" {
   igw_id          = module.rnd_vpc.igw_id
   tgw_id          = module.transit_gateway.tgw_id
   remote_vpc_cidr = var.prod_vpc_cidr
+
+  tgw_attachment_ids = compact([
+    module.tgw_attachments.tgw_attach_prod_id,
+    module.tgw_attachments.tgw_attach_rnd_id,
+  ])
 
   depends_on = [module.transit_gateway]
 }

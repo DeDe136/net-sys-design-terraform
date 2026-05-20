@@ -95,7 +95,10 @@ resource "aws_route_table_association" "public_1b" {
   route_table_id = aws_route_table.public.id
 }
 
-# Private RT AZ-1a → NAT + TGW
+# Private RT AZ-1a → NAT only
+# FIX: Không đặt route TGW inline trong aws_route_table.
+# AWS validate attachment ngay lúc tạo route — nếu attachment chưa có → lỗi.
+# Route TGW được tạo riêng bên dưới bằng aws_route với count guard.
 resource "aws_route_table" "private_1a" {
   vpc_id = var.vpc_id
   tags   = { Name = "rt-${var.name_prefix}-private-1a" }
@@ -104,11 +107,6 @@ resource "aws_route_table" "private_1a" {
     cidr_block     = "0.0.0.0/0"
     nat_gateway_id = aws_nat_gateway.nat_1a.id
   }
-
-  route {
-    cidr_block         = var.remote_vpc_cidr
-    transit_gateway_id = var.tgw_id
-  }
 }
 
 resource "aws_route_table_association" "private_1a" {
@@ -116,7 +114,7 @@ resource "aws_route_table_association" "private_1a" {
   route_table_id = aws_route_table.private_1a.id
 }
 
-# Private RT AZ-1b → NAT + TGW
+# Private RT AZ-1b → NAT only
 resource "aws_route_table" "private_1b" {
   vpc_id = var.vpc_id
   tags   = { Name = "rt-${var.name_prefix}-private-1b" }
@@ -125,16 +123,31 @@ resource "aws_route_table" "private_1b" {
     cidr_block     = "0.0.0.0/0"
     nat_gateway_id = aws_nat_gateway.nat_1b.id
   }
-
-  route {
-    cidr_block         = var.remote_vpc_cidr
-    transit_gateway_id = var.tgw_id
-  }
 }
 
 resource "aws_route_table_association" "private_1b" {
   subnet_id      = aws_subnet.private_1b.id
   route_table_id = aws_route_table.private_1b.id
+}
+
+# ── TGW Routes — tạo SAU KHI attachment đã hoàn tất ─────────────
+# count = 0 khi tgw_attachment_ids rỗng (Phase 3, attachment chưa có).
+# count = 1 sau Phase 4 khi root module truyền attachment IDs vào.
+# Terraform detect thay đổi count và tạo route trong cùng 1 lần apply.
+resource "aws_route" "private_1a_tgw" {
+  count                  = length(var.tgw_attachment_ids) > 0 ? 1 : 0
+  route_table_id         = aws_route_table.private_1a.id
+  destination_cidr_block = var.remote_vpc_cidr
+  transit_gateway_id     = var.tgw_id
+  depends_on             = [aws_route_table.private_1a]
+}
+
+resource "aws_route" "private_1b_tgw" {
+  count                  = length(var.tgw_attachment_ids) > 0 ? 1 : 0
+  route_table_id         = aws_route_table.private_1b.id
+  destination_cidr_block = var.remote_vpc_cidr
+  transit_gateway_id     = var.tgw_id
+  depends_on             = [aws_route_table.private_1b]
 }
 
 # ── DB Route Table (Production only) ─────────────────────────────

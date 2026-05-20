@@ -61,10 +61,14 @@ output "s3_bucket_name" {
 output "s3_bucket_arn" {
   value = module.s3.bucket_arn
 }
-output "client_vpn_endpoint_id" {
-  value = module.client_vpn.vpn_endpoint_id
-}
-output "client_vpn_dns" {
-  description = "Client VPN DNS name (dùng để tạo file .ovpn)"
-  value       = module.client_vpn.vpn_endpoint_dns
-}
+# ⚠ FIX: Comment out cùng với module "client_vpn" trong main.tf.
+# Terraform báo lỗi "Module not found" nếu output tham chiếu module
+# đang bị comment. Bỏ comment 2 output bên dưới SAU KHI enable VPN.
+#
+# output "client_vpn_endpoint_id" {
+#   value = module.client_vpn.vpn_endpoint_id
+# }
+# output "client_vpn_dns" {
+#   description = "Client VPN DNS name (dùng để tạo file .ovpn)"
+#   value       = module.client_vpn.vpn_endpoint_dns
+# }

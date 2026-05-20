@@ -7,19 +7,6 @@
 #   cd global && terraform init && terraform apply
 # ──────────────────────────────────────────────────────────────────
 
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
-provider "aws" {
-  region = "us-east-1"
-}
-
 # ── EC2 Instance Role (SSM + S3 access) ──────────────────────────
 resource "aws_iam_role" "ec2_instance_role" {
   name = "ec2-instance-role"
