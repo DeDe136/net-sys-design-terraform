@@ -1,10 +1,17 @@
 # ══════════════════════════════════════════════════════════════════
 # EC2 Module — Production (ASG) + R&D (fixed instances)
+#
+# Traffic flow:
+#   Internet → ALB → EC2 Web Portal (via NAT cho package updates)
+#   EC2 Web Portal → EC2 ERP/CRM (internal, port 8080/8443)
+#   EC2 R&D → Internet via NAT Gateway (package updates only, no ALB)
 # ══════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────
 # PRODUCTION — Launch Templates + Auto Scaling Groups
 # ─────────────────────────────────────────────────────────────────
+
+# ── Web Portal (ALB target) ───────────────────────────────────────
 resource "aws_launch_template" "web" {
   count         = var.env == "prod" ? 1 : 0
   name_prefix   = "lt-prod-web-portal-"
@@ -15,6 +22,24 @@ resource "aws_launch_template" "web" {
     associate_public_ip_address = false
     security_groups             = [var.sg_web_id]
   }
+
+  # IAM instance profile — SSM Session Manager + S3 access (tạo trong global/iam.tf)
+  dynamic "iam_instance_profile" {
+    for_each = var.iam_instance_profile != "" ? [1] : []
+    content {
+      name = var.iam_instance_profile
+    }
+  }
+
+  key_name = var.key_name != "" ? var.key_name : null
+
+  # User data: cập nhật gói qua NAT Gateway
+  user_data = base64encode(<<-USERDATA
+    #!/bin/bash
+    yum update -y
+    # Traffic ra internet đi qua NAT Gateway (route table private subnet)
+  USERDATA
+  )
 
   tag_specifications {
     resource_type = "instance"
@@ -31,8 +56,10 @@ resource "aws_autoscaling_group" "web" {
   max_size            = var.asg_web_max
   desired_capacity    = var.asg_web_desired
   vpc_zone_identifier = var.web_subnet_ids
-  target_group_arns   = [var.alb_web_tg_arn]
-  health_check_type   = "ELB"
+
+  # ALB chỉ gắn với Web Portal
+  target_group_arns        = [var.alb_web_tg_arn]
+  health_check_type        = "ELB"
   health_check_grace_period = 300
 
   launch_template {
@@ -52,9 +79,9 @@ resource "aws_autoscaling_group" "web" {
   }
 }
 
-resource "aws_autoscaling_policy" "web_scale_out" {
+resource "aws_autoscaling_policy" "web_cpu" {
   count                  = var.env == "prod" ? 1 : 0
-  name                   = "asg-prod-web-scale-out"
+  name                   = "asg-prod-web-cpu"
   autoscaling_group_name = aws_autoscaling_group.web[0].name
   policy_type            = "TargetTrackingScaling"
 
@@ -66,7 +93,7 @@ resource "aws_autoscaling_policy" "web_scale_out" {
   }
 }
 
-# ── ERP/CRM Launch Template + ASG ────────────────────────────────
+# ── ERP/CRM (KHÔNG gắn ALB — nhận traffic nội bộ từ Web Portal) ──
 resource "aws_launch_template" "erp" {
   count         = var.env == "prod" ? 1 : 0
   name_prefix   = "lt-prod-erp-crm-"
@@ -77,6 +104,24 @@ resource "aws_launch_template" "erp" {
     associate_public_ip_address = false
     security_groups             = [var.sg_erp_id]
   }
+
+  # IAM instance profile — SSM Session Manager + S3 access (tạo trong global/iam.tf)
+  dynamic "iam_instance_profile" {
+    for_each = var.iam_instance_profile != "" ? [1] : []
+    content {
+      name = var.iam_instance_profile
+    }
+  }
+
+  key_name = var.key_name != "" ? var.key_name : null
+
+  # User data: cập nhật gói qua NAT Gateway
+  user_data = base64encode(<<-USERDATA
+    #!/bin/bash
+    yum update -y
+    # Traffic ra internet đi qua NAT Gateway (route table private subnet)
+  USERDATA
+  )
 
   tag_specifications {
     resource_type = "instance"
@@ -93,8 +138,10 @@ resource "aws_autoscaling_group" "erp" {
   max_size            = var.asg_erp_max
   desired_capacity    = var.asg_erp_desired
   vpc_zone_identifier = var.erp_subnet_ids
-  target_group_arns   = [var.alb_erp_tg_arn]
-  health_check_type   = "ELB"
+
+  # KHÔNG gắn target_group_arns — ERP/CRM không được ALB load balance trực tiếp
+  # Web Portal sẽ forward request nội bộ đến ERP/CRM qua port 8080/8443
+  health_check_type        = "EC2"
   health_check_grace_period = 300
 
   launch_template {
@@ -114,9 +161,9 @@ resource "aws_autoscaling_group" "erp" {
   }
 }
 
-resource "aws_autoscaling_policy" "erp_scale_out" {
+resource "aws_autoscaling_policy" "erp_cpu" {
   count                  = var.env == "prod" ? 1 : 0
-  name                   = "asg-prod-erp-scale-out"
+  name                   = "asg-prod-erp-cpu"
   autoscaling_group_name = aws_autoscaling_group.erp[0].name
   policy_type            = "TargetTrackingScaling"
 
@@ -129,18 +176,29 @@ resource "aws_autoscaling_policy" "erp_scale_out" {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# R&D — Fixed EC2 instances (4 per AZ)
-# Không hardcode private IP — để AWS tự cấp phát trong subnet CIDR
+# R&D — Fixed EC2 instances (rnd_instance_count_per_az per AZ)
+# Không gắn ALB. Cập nhật gói từ internet qua NAT Gateway.
 # ─────────────────────────────────────────────────────────────────
 resource "aws_instance" "rnd_2a" {
   count         = var.env == "rnd" ? var.rnd_instance_count_per_az : 0
   ami           = var.ami
   instance_type = var.instance_type
-  subnet_id     = var.rnd_subnet_2a_id
 
+  # private subnet → traffic ra internet đi qua NAT Gateway (rt-rnd-private-2a)
+  subnet_id              = var.rnd_subnet_2a_id
   vpc_security_group_ids = [var.sg_rnd_id]
+  key_name               = var.key_name != "" ? var.key_name : null
+  iam_instance_profile   = var.iam_instance_profile != "" ? var.iam_instance_profile : null
 
-  # Không hardcode private_ip — để AWS tự assign trong subnet 10.1.2.0/24
+  # User data: cập nhật gói cần thiết qua NAT Gateway
+  user_data = base64encode(<<-USERDATA
+    #!/bin/bash
+    # Internet access via NAT Gateway (route: 0.0.0.0/0 → nat-rnd-2a)
+    yum update -y
+    # Cài thêm tool R&D nếu cần
+  USERDATA
+  )
+
   tags = {
     Name = "rnd-testing-2a-0${count.index + 1}"
     Env  = "rnd"
@@ -152,9 +210,21 @@ resource "aws_instance" "rnd_2b" {
   count         = var.env == "rnd" ? var.rnd_instance_count_per_az : 0
   ami           = var.ami
   instance_type = var.instance_type
-  subnet_id     = var.rnd_subnet_2b_id
 
+  # private subnet → traffic ra internet đi qua NAT Gateway (rt-rnd-private-2b)
+  subnet_id              = var.rnd_subnet_2b_id
   vpc_security_group_ids = [var.sg_rnd_id]
+  key_name               = var.key_name != "" ? var.key_name : null
+  iam_instance_profile   = var.iam_instance_profile != "" ? var.iam_instance_profile : null
+
+  # User data: cập nhật gói cần thiết qua NAT Gateway
+  user_data = base64encode(<<-USERDATA
+    #!/bin/bash
+    # Internet access via NAT Gateway (route: 0.0.0.0/0 → nat-rnd-2b)
+    yum update -y
+    # Cài thêm tool R&D nếu cần
+  USERDATA
+  )
 
   tags = {
     Name = "rnd-testing-2b-0${count.index + 1}"

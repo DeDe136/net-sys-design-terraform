@@ -2,7 +2,19 @@ variable "env"           { type = string }
 variable "ami"           { type = string }
 variable "instance_type" { type = string }
 
-# Production variables (optional for rnd)
+# Optional: IAM instance profile for SSM access
+variable "iam_instance_profile" {
+  type    = string
+  default = ""
+}
+
+# Optional: EC2 key pair name (leave empty to use SSM Session Manager)
+variable "key_name" {
+  type    = string
+  default = ""
+}
+
+# Production variables (not used in rnd)
 variable "web_subnet_ids" {
   type    = list(string)
   default = []
@@ -19,14 +31,13 @@ variable "sg_erp_id" {
   type    = string
   default = ""
 }
+
+# ALB chỉ gắn với Web Portal — không cần alb_erp_tg_arn nữa
 variable "alb_web_tg_arn" {
   type    = string
   default = ""
 }
-variable "alb_erp_tg_arn" {
-  type    = string
-  default = ""
-}
+
 variable "asg_web_min" {
   type    = number
   default = 1
@@ -52,7 +63,7 @@ variable "asg_erp_desired" {
   default = 2
 }
 
-# R&D variables (optional for prod)
+# R&D variables (not used in prod)
 variable "rnd_subnet_2a_id" {
   type    = string
   default = ""

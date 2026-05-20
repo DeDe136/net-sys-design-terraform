@@ -1,0 +1,157 @@
+# ══════════════════════════════════════════════════════════════════
+# .gitignore — Terraform AWS Infrastructure Project
+# ══════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────
+# TERRAFORM STATE — TUYỆT ĐỐI KHÔNG COMMIT
+# State chứa toàn bộ thông tin hạ tầng, bao gồm secrets.
+# Dùng remote state (S3 + DynamoDB) — xem backend.tf
+# ─────────────────────────────────────────────────────────────────
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform plan output (có thể chứa secrets dạng plaintext)
+tfplan
+*.tfplan
+
+# ─────────────────────────────────────────────────────────────────
+# TERRAFORM WORKING DIRECTORY
+# Tạo lại bằng: terraform init
+# ─────────────────────────────────────────────────────────────────
+.terraform/
+.terraform.lock.hcl
+
+# ─────────────────────────────────────────────────────────────────
+# BIẾN NHẠY CẢM — TUYỆT ĐỐI KHÔNG COMMIT
+# Dùng environment variables (TF_VAR_*) hoặc AWS Secrets Manager.
+# Xem phần "Quản lý secrets" trong README.md
+# ─────────────────────────────────────────────────────────────────
+
+# File tfvars chứa secrets (password, key...)
+*.auto.tfvars
+secrets.tfvars
+secrets.*.tfvars
+secret.tfvars
+*secret*
+*password*
+*credential*
+
+# Cho phép commit file tfvars mẫu (không chứa giá trị thật)
+!terraform.tfvars
+!environments/**/*.tfvars
+!*.tfvars.example
+
+# ─────────────────────────────────────────────────────────────────
+# VPN CERTIFICATES & KEYS — TUYỆT ĐỐI KHÔNG COMMIT
+# Được tạo bởi scripts/generate_vpn_certs.sh
+# Lưu trữ an toàn trong AWS ACM (đã import bởi script)
+# ─────────────────────────────────────────────────────────────────
+# PKI / certificates
+*.pem
+*.crt
+*.csr
+*.key
+*.p12
+*.pfx
+
+# File cấu hình VPN client
+*.ovpn
+
+# Thư mục chứa certs (tạo bởi easy-rsa)
+/certs/
+/pki/
+easy-rsa/
+
+# ─────────────────────────────────────────────────────────────────
+# AWS CREDENTIALS — TUYỆT ĐỐI KHÔNG COMMIT
+# ─────────────────────────────────────────────────────────────────
+.aws/
+aws-credentials*
+*access_key*
+*secret_key*
+
+# ─────────────────────────────────────────────────────────────────
+# LOGS & DEBUG OUTPUT
+# ─────────────────────────────────────────────────────────────────
+*.log
+crash.log
+crash.*.log
+terraform.log
+
+# ─────────────────────────────────────────────────────────────────
+# HỆ ĐIỀU HÀNH
+# ─────────────────────────────────────────────────────────────────
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.nfs*
+
+# ─────────────────────────────────────────────────────────────────
+# IDE & EDITOR
+# ─────────────────────────────────────────────────────────────────
+# JetBrains (IntelliJ, GoLand, PyCharm...)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Vim / Neovim
+*.swp
+*.swo
+*.swn
+Session.vim
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+.#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ─────────────────────────────────────────────────────────────────
+# BUILD & TEMP FILES
+# ─────────────────────────────────────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+.cache/
+tmp/
+temp/
+
+# ─────────────────────────────────────────────────────────────────
+# FILE ĐƯỢC PHÉP COMMIT (whitelist rõ ràng)
+# ─────────────────────────────────────────────────────────────────
+# Terraform source code
+!*.tf
+!*.tfvars.example
+!*.tpl
+
+# Scripts
+!scripts/*.sh
+
+# Docs
+!*.md
+!*.txt
+!LICENSE

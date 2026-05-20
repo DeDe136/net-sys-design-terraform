@@ -1,3 +1,9 @@
+# ══════════════════════════════════════════════════════════════════
+# ALB Module — Production only
+# ALB chỉ load balance cho EC2 Web Portal.
+# EC2 ERP/CRM nhận traffic nội bộ từ Web Portal (không qua ALB).
+# ══════════════════════════════════════════════════════════════════
+
 resource "aws_lb" "this" {
   name               = var.name
   internal           = false
@@ -9,7 +15,7 @@ resource "aws_lb" "this" {
   tags = { Name = var.name }
 }
 
-# ── Target Groups ─────────────────────────────────────────────────
+# ── Target Group: Web Portal only ────────────────────────────────
 resource "aws_lb_target_group" "web" {
   name     = "${var.name}-tg-web"
   port     = 80
@@ -22,23 +28,11 @@ resource "aws_lb_target_group" "web" {
     unhealthy_threshold = 2
     interval            = 30
   }
+
+  tags = { Name = "${var.name}-tg-web" }
 }
 
-resource "aws_lb_target_group" "erp" {
-  name     = "${var.name}-tg-erp"
-  port     = 8080
-  protocol = "HTTP"
-  vpc_id   = var.vpc_id
-
-  health_check {
-    path                = "/health"
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
-    interval            = 30
-  }
-}
-
-# ── Listeners ─────────────────────────────────────────────────────
+# ── Listener HTTP → Web Portal ────────────────────────────────────
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.this.arn
   port              = 80

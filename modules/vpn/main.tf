@@ -40,10 +40,18 @@ resource "aws_cloudwatch_log_stream" "vpn" {
   log_group_name = aws_cloudwatch_log_group.vpn.name
 }
 
-# ── Associate VPN to target subnet (prod private 1a) ─────────────
+# ── Associate VPN to 2 private subnets (HA across AZ-1a và AZ-1b) ─
+# Mỗi association = 1 ENI được tạo trong subnet đó
+# Remote Staff kết nối và được assign IP từ client_cidr, traffic được
+# route đến TGW từ private subnet route table.
 resource "aws_ec2_client_vpn_network_association" "prod_1a" {
   client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
   subnet_id              = var.target_subnet_id
+}
+
+resource "aws_ec2_client_vpn_network_association" "prod_1b" {
+  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
+  subnet_id              = var.target_subnet_1b_id
 }
 
 # ── Authorization rules ───────────────────────────────────────────
@@ -62,22 +70,40 @@ resource "aws_ec2_client_vpn_authorization_rule" "rnd" {
 }
 
 # ── Routes ───────────────────────────────────────────────────────
-# Route Prod VPC: đi qua subnet association
-resource "aws_ec2_client_vpn_route" "prod" {
+# Route Prod VPC: đi qua subnet association AZ-1a
+resource "aws_ec2_client_vpn_route" "prod_1a" {
   client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
   destination_cidr_block = "10.0.0.0/16"
   target_vpc_subnet_id   = var.target_subnet_id
-  description            = "Route to Production VPC"
+  description            = "Route to Production VPC via AZ-1a"
 
   depends_on = [aws_ec2_client_vpn_network_association.prod_1a]
 }
 
-# Route R&D VPC: cũng đi qua cùng subnet (prod private 1a có route đến TGW)
-resource "aws_ec2_client_vpn_route" "rnd" {
+resource "aws_ec2_client_vpn_route" "prod_1b" {
+  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
+  destination_cidr_block = "10.0.0.0/16"
+  target_vpc_subnet_id   = var.target_subnet_1b_id
+  description            = "Route to Production VPC via AZ-1b"
+
+  depends_on = [aws_ec2_client_vpn_network_association.prod_1b]
+}
+
+# Route R&D VPC: đi qua private subnet có route đến TGW
+resource "aws_ec2_client_vpn_route" "rnd_1a" {
   client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
   destination_cidr_block = "10.1.0.0/16"
   target_vpc_subnet_id   = var.target_subnet_id
-  description            = "Route to R&D VPC via Transit Gateway"
+  description            = "Route to R&D VPC via Transit Gateway (AZ-1a)"
 
   depends_on = [aws_ec2_client_vpn_network_association.prod_1a]
+}
+
+resource "aws_ec2_client_vpn_route" "rnd_1b" {
+  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
+  destination_cidr_block = "10.1.0.0/16"
+  target_vpc_subnet_id   = var.target_subnet_1b_id
+  description            = "Route to R&D VPC via Transit Gateway (AZ-1b)"
+
+  depends_on = [aws_ec2_client_vpn_network_association.prod_1b]
 }

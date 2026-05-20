@@ -1,51 +1,21 @@
-terraform {
-  required_version = ">= 1.5.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-
-  # Uncomment và cấu hình để dùng remote state (khuyến nghị cho production)
-  # backend "s3" {
-  #   bucket         = "your-tfstate-bucket"
-  #   key            = "aws-infra/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "terraform-lock"
-  #   encrypt        = true
-  # }
-}
-
-provider "aws" {
-  region = var.aws_region
-}
+# ──────────────────────────────────────────────────────────────────
+# main.tf  —  Root module
+#
+# Thứ tự dependency:
+#   Phase 1: VPCs
+#   Phase 2: Transit Gateway (chỉ tạo TGW, KHÔNG tạo attachments)
+#   Phase 3: Subnets (dùng tgw_id để khai báo routes trong route tables)
+#   Phase 4: TGW Attachments (dùng private subnet IDs từ Phase 3)
+#   Phase 5: Security Groups, ALB, EC2, RDS, DS, EFS, S3, VPN
+#
+# BUG FIX: Transit Gateway chỉ được tạo 1 lần duy nhất.
+# Phase 2 dùng create_tgw=true để tạo TGW resource.
+# Phase 4 dùng create_tgw=false + existing_tgw_id để chỉ tạo attachments
+# mà KHÔNG tạo TGW mới.
+# ──────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────
-# Transit Gateway — phải tạo trước vì subnets cần tgw_id để tạo routes
-# ─────────────────────────────────────────────────────────────────
-module "transit_gateway" {
-  source = "./modules/transit_gateway"
-
-  prod_vpc_id            = module.prod_vpc.vpc_id
-  prod_private_subnet_ids = [
-    module.prod_subnets.private_subnet_1a_id,
-    module.prod_subnets.private_subnet_1b_id,
-  ]
-  rnd_vpc_id            = module.rnd_vpc.vpc_id
-  rnd_private_subnet_ids = [
-    module.rnd_subnets.private_subnet_1a_id,
-    module.rnd_subnets.private_subnet_1b_id,
-  ]
-
-  depends_on = [
-    module.prod_vpc,
-    module.rnd_vpc,
-  ]
-}
-
-# ─────────────────────────────────────────────────────────────────
-# Production VPC + Subnets
+# Phase 1: VPCs
 # ─────────────────────────────────────────────────────────────────
 module "prod_vpc" {
   source   = "./modules/vpc"
@@ -53,6 +23,28 @@ module "prod_vpc" {
   vpc_name = var.prod_vpc_name
 }
 
+module "rnd_vpc" {
+  source   = "./modules/vpc"
+  vpc_cidr = var.rnd_vpc_cidr
+  vpc_name = var.rnd_vpc_name
+}
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 2: Transit Gateway (tạo TGW, chưa attach)
+# ─────────────────────────────────────────────────────────────────
+module "transit_gateway" {
+  source      = "./modules/transit_gateway"
+  create_tgw  = true   # Chỉ tạo TGW resource, KHÔNG tạo attachments
+  prod_vpc_id = module.prod_vpc.vpc_id
+  rnd_vpc_id  = module.rnd_vpc.vpc_id
+  # Để trống — attachments tạo ở Phase 4 sau khi subnets sẵn sàng
+  prod_private_subnet_ids = []
+  rnd_private_subnet_ids  = []
+}
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 3: Subnets (route tables tham chiếu tgw_id từ Phase 2)
+# ─────────────────────────────────────────────────────────────────
 module "prod_subnets" {
   source = "./modules/subnets"
   vpc_id = module.prod_vpc.vpc_id
@@ -72,15 +64,6 @@ module "prod_subnets" {
   remote_vpc_cidr = var.rnd_vpc_cidr
 
   depends_on = [module.transit_gateway]
-}
-
-# ─────────────────────────────────────────────────────────────────
-# R&D VPC + Subnets
-# ─────────────────────────────────────────────────────────────────
-module "rnd_vpc" {
-  source   = "./modules/vpc"
-  vpc_cidr = var.rnd_vpc_cidr
-  vpc_name = var.rnd_vpc_name
 }
 
 module "rnd_subnets" {
@@ -105,7 +88,31 @@ module "rnd_subnets" {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# Security Groups
+# Phase 4: TGW Attachments (sau khi subnets đã tạo xong)
+# FIX: Dùng create_tgw=false + existing_tgw_id thay vì gọi module
+#      riêng biệt (sẽ tạo TGW mới — BUG).
+# ─────────────────────────────────────────────────────────────────
+module "tgw_attachments" {
+  source          = "./modules/transit_gateway"
+  create_tgw      = false                           # KHÔNG tạo TGW mới
+  existing_tgw_id = module.transit_gateway.tgw_id  # Dùng TGW đã tạo ở Phase 2
+  prod_vpc_id     = module.prod_vpc.vpc_id
+  rnd_vpc_id      = module.rnd_vpc.vpc_id
+
+  prod_private_subnet_ids = [
+    module.prod_subnets.private_subnet_1a_id,
+    module.prod_subnets.private_subnet_1b_id,
+  ]
+  rnd_private_subnet_ids = [
+    module.rnd_subnets.private_subnet_1a_id,
+    module.rnd_subnets.private_subnet_1b_id,
+  ]
+
+  depends_on = [module.prod_subnets, module.rnd_subnets]
+}
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 5: Security Groups
 # ─────────────────────────────────────────────────────────────────
 module "prod_security_groups" {
   source       = "./modules/security_groups"
@@ -125,6 +132,7 @@ module "rnd_security_groups" {
 
 # ─────────────────────────────────────────────────────────────────
 # Application Load Balancer (Production only)
+# 1 ALB multi-AZ span cả 2 public subnet (best practice)
 # ─────────────────────────────────────────────────────────────────
 module "prod_alb" {
   source = "./modules/alb"
@@ -146,6 +154,8 @@ module "prod_ec2" {
   ami           = var.ec2_ami
   instance_type = var.ec2_instance_type
 
+  iam_instance_profile = var.ec2_instance_profile_name
+
   web_subnet_ids = [
     module.prod_subnets.private_subnet_1a_id,
     module.prod_subnets.private_subnet_1b_id,
@@ -158,8 +168,9 @@ module "prod_ec2" {
   sg_web_id = module.prod_security_groups.sg_ec2_web_id
   sg_erp_id = module.prod_security_groups.sg_ec2_erp_id
 
+  # ALB chỉ load balance cho Web Portal
+  # ERP/CRM nhận traffic nội bộ từ Web Portal, không gắn ALB
   alb_web_tg_arn = module.prod_alb.web_tg_arn
-  alb_erp_tg_arn = module.prod_alb.erp_tg_arn
 
   asg_web_min     = var.asg_web_min
   asg_web_max     = var.asg_web_max
@@ -170,7 +181,7 @@ module "prod_ec2" {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# EC2 — R&D Testing (4 instances mỗi AZ, không ASG)
+# EC2 — R&D Testing (rnd_instance_count_per_az per AZ, no ASG)
 # ─────────────────────────────────────────────────────────────────
 module "rnd_ec2" {
   source        = "./modules/ec2"
@@ -178,17 +189,12 @@ module "rnd_ec2" {
   ami           = var.ec2_ami
   instance_type = var.ec2_instance_type
 
+  iam_instance_profile = var.ec2_instance_profile_name
+
   rnd_subnet_2a_id          = module.rnd_subnets.private_subnet_1a_id
   rnd_subnet_2b_id          = module.rnd_subnets.private_subnet_1b_id
   sg_rnd_id                 = module.rnd_security_groups.sg_rnd_ec2_id
-  rnd_instance_count_per_az = 4
-
-  asg_web_min     = var.asg_web_min
-  asg_web_max     = var.asg_web_max
-  asg_web_desired = var.asg_web_desired
-  asg_erp_min     = var.asg_erp_min
-  asg_erp_max     = var.asg_erp_max
-  asg_erp_desired = var.asg_erp_desired
+  rnd_instance_count_per_az = var.rnd_instance_count_per_az
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -212,7 +218,6 @@ module "prod_rds" {
 
 # ─────────────────────────────────────────────────────────────────
 # Directory Service — AWS Managed Microsoft AD (Production)
-# Deployed vào DB subnets (AZ-1a + AZ-1b) để tách biệt
 # ─────────────────────────────────────────────────────────────────
 module "prod_directory_service" {
   source = "./modules/directory_service"
@@ -245,7 +250,7 @@ module "rnd_efs" {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# S3 VPC Gateway Endpoints (phải tạo trước S3 bucket policy)
+# S3 VPC Gateway Endpoints (tạo trước S3 bucket policy)
 # ─────────────────────────────────────────────────────────────────
 module "prod_s3_endpoint" {
   source = "./modules/endpoints"
@@ -272,7 +277,7 @@ module "rnd_s3_endpoint" {
 }
 
 # ─────────────────────────────────────────────────────────────────
-# S3 Bucket + Bucket Policy (restrict access via VPC Endpoints only)
+# S3 Bucket (restrict access via VPC Endpoints only)
 # ─────────────────────────────────────────────────────────────────
 module "s3" {
   source      = "./modules/s3"
@@ -282,22 +287,26 @@ module "s3" {
     module.rnd_s3_endpoint.endpoint_id,
   ]
 
-  depends_on = [
-    module.prod_s3_endpoint,
-    module.rnd_s3_endpoint,
-  ]
+  depends_on = [module.prod_s3_endpoint, module.rnd_s3_endpoint]
 }
 
 # ─────────────────────────────────────────────────────────────────
 # Client VPN (Remote Staff → Transit Gateway → Prod/R&D VPCs)
+# FIX: Associate VPN với 2 subnet (AZ-1a + AZ-1b) để HA
+#
+# ⚠ CHƯA ENABLE: cần ACM certificates trước khi bỏ comment
+# Bước 1: chạy scripts/generate_vpn_certs.sh
+# Bước 2: điền vpn_server_certificate_arn + vpn_client_certificate_arn vào secret.tfvars
+# Bước 3: bỏ comment block bên dưới rồi terraform apply
 # ─────────────────────────────────────────────────────────────────
-module "client_vpn" {
-  source           = "./modules/vpn"
-  client_cidr      = var.vpn_client_cidr
-  target_subnet_id = module.prod_subnets.private_subnet_1a_id
-  vpc_id           = module.prod_vpc.vpc_id
-  name             = "client-vpn-prod"
-
-  server_certificate_arn = var.vpn_server_certificate_arn
-  client_certificate_arn = var.vpn_client_certificate_arn
-}
+# module "client_vpn" {
+#   source              = "./modules/vpn"
+#   client_cidr         = var.vpn_client_cidr
+#   target_subnet_id    = module.prod_subnets.private_subnet_1a_id
+#   target_subnet_1b_id = module.prod_subnets.private_subnet_1b_id
+#   vpc_id              = module.prod_vpc.vpc_id
+#   name                = "client-vpn-prod"
+#
+#   server_certificate_arn = var.vpn_server_certificate_arn
+#   client_certificate_arn = var.vpn_client_certificate_arn
+# }
