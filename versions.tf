@@ -1,10 +1,21 @@
-# ──────────────────────────────────────────────────────────────────
-# versions.tf  —  Terraform & provider version constraints
+# ══════════════════════════════════════════════════════════════════
+# versions.tf — Terraform & Provider Version Constraints
 #
-# FIX: Xoá terraform {} block trùng với providers.tf (Terraform chỉ
-# cho phép 1 terraform block per root module).
-# Xoá provider "random" và "tls" không được dùng ở bất kỳ module nào.
-# ──────────────────────────────────────────────────────────────────
-# (File này được giữ lại để tương thích với workflow, nhưng toàn bộ
-#  required_version và required_providers đã được khai báo đủ trong
-#  providers.tf — không cần khai báo lại ở đây.)
+# File này là nơi DUY NHẤT khai báo required_version và
+# required_providers cho root module.
+#
+# Tách khỏi providers.tf để đúng convention Terraform:
+#   versions.tf  → khai báo version constraint (meta)
+#   providers.tf → khai báo provider configuration (runtime)
+# ══════════════════════════════════════════════════════════════════
+
+terraform {
+  required_version = ">= 1.3.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}

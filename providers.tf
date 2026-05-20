@@ -9,19 +9,10 @@
 #   4. Environment Variables (TF_VAR hoặc AWS_*)
 #
 # Không cần cài AWS CLI — chỉ cần file credentials hoặc biến môi trường.
+#
+# LƯU Ý: required_version và required_providers được khai báo trong
+# versions.tf — không khai báo lại ở đây để tránh trùng lặp.
 # ══════════════════════════════════════════════════════════════════
-
-# ── Terraform required providers ──────────────────────────────────
-terraform {
-  required_version = ">= 1.3.0"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
 
 # ══════════════════════════════════════════════════════════════════
 # PHƯƠNG THỨC 1: AWS Named Profile (không cần AWS CLI)
@@ -33,7 +24,7 @@ terraform {
 #   aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 #
 # Sau đó set biến: export TF_VAR_aws_profile="my-project"
-# hoặc chỉnh aws_profile trong terraform.tfvars
+# hoặc chỉnh aws_profile trong secret.tfvars
 # ══════════════════════════════════════════════════════════════════
 provider "aws" {
   region = var.aws_region

@@ -349,45 +349,74 @@ Terraform tự động đọc các biến trên, không cần khai báo thêm.
 
 ## 6. Triển khai lần đầu
 
-### Bước 1 — Clone & kiểm tra cấu trúc
+> **Tổng quan thứ tự:** Clone → IAM global → (tùy chọn) Remote state → (tùy chọn) VPN certs → Điền `secret.tfvars` → Cập nhật `terraform.tfvars` → Apply giai đoạn 1 → Apply giai đoạn 2 → (tùy chọn) Tạo file `.ovpn`
+
+---
+
+### Bước 1 — Clone repo & kiểm tra cấu trúc
 
 ```bash
 git clone <repo-url>
-cd terraform-project
+cd net-sys-design-terraform
 ls
 ```
 
+Xác nhận có đủ các file sau trước khi tiếp tục:
+
+```
+main.tf  variables.tf  terraform.tfvars  secret.tfvars.example
+backend.tf  providers.tf  versions.tf  outputs.tf
+modules/  global/  environments/  scripts/
+```
+
+---
+
 ### Bước 2 — Deploy IAM global (chạy 1 lần duy nhất)
 
-IAM roles và instance profiles được tách riêng vào `global/iam.tf` để không bị tạo lại mỗi lần apply:
+IAM roles và instance profiles được tách riêng vào `global/iam.tf` để tránh bị tạo lại mỗi lần apply ở root module. Đây là bước **bắt buộc** trước khi deploy hạ tầng chính vì EC2 cần `ec2-instance-profile` để SSM Session Manager và S3 access hoạt động.
 
 ```bash
 cd global
 terraform init
 terraform apply
+```
+
+Khi Terraform hỏi `Do you want to perform these actions?`, nhập `yes`.
+
+Sau khi apply xong, quay về thư mục gốc:
+
+```bash
 cd ..
 ```
 
-> Sau bước này sẽ có `ec2-instance-profile` dùng cho SSM Session Manager và S3 access.
+> **Kiểm tra:** Vào AWS Console → IAM → Roles → tìm `ec2-ssm-s3-role` và `client-vpn-cloudwatch-role`. Vào Instance Profiles → tìm `ec2-instance-profile`.
 
-### Bước 3 — Bootstrap remote state (khuyến nghị)
+---
 
-Remote state giúp nhiều người/CI cùng làm việc mà không conflict:
+### Bước 3 — Bootstrap remote state (khuyến nghị cho team / CI)
+
+Remote state lưu `terraform.tfstate` trên S3 thay vì máy cục bộ, đồng thời dùng DynamoDB để lock khi nhiều người hoặc CI chạy đồng thời. Bỏ qua bước này nếu chỉ làm một mình và chỉ dùng local state (dev/test).
+
+**Script yêu cầu AWS CLI đã được cấu hình (chỉ cho bước bootstrap này):**
 
 ```bash
+# Cấp quyền thực thi nếu chưa có
+chmod +x scripts/bootstrap_backend.sh
+
+# Chạy script — tự động lấy Account ID từ AWS STS
 bash scripts/bootstrap_backend.sh
 ```
 
-Script tạo:
-- S3 bucket: `tfstate-aws-infra-<account_id>` (versioning + encryption bật sẵn)
-- DynamoDB table: `terraform-state-lock` (locking tránh concurrent apply)
+Script tạo hai tài nguyên:
+- **S3 bucket** `tfstate-aws-infra-<account_id>` — versioning bật, public access block, SSE-S3 encryption.
+- **DynamoDB table** `terraform-state-lock` — PAY_PER_REQUEST, dùng để lock state khi apply.
 
-Sau đó uncomment block `backend` trong `backend.tf`, thay `<account_id>`:
+Sau khi script chạy xong, nó sẽ in ra Account ID. Ghi lại giá trị này, sau đó mở `backend.tf` và **uncomment** block backend, thay `<account_id>` bằng số thực tế:
 
 ```hcl
 terraform {
   backend "s3" {
-    bucket         = "tfstate-aws-infra-123456789012"
+    bucket         = "tfstate-aws-infra-123456789012"   # ← thay Account ID của bạn
     key            = "aws-infra/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "terraform-state-lock"
@@ -396,32 +425,51 @@ terraform {
 }
 ```
 
-Re-init để migrate state:
+Re-init để Terraform migrate state local lên S3:
 
 ```bash
 terraform init -reconfigure
 ```
 
-> Bỏ qua bước này nếu chỉ dùng local state (dev/test): `terraform init`
+Terraform sẽ hỏi `Do you want to copy existing state to the new backend?` → nhập `yes`.
 
-### Bước 4 — Tạo VPN certificates (bỏ qua nếu chưa cần VPN)
+> **Bỏ qua bước này (local state):** Giữ nguyên `backend.tf` (để comment), chạy `terraform init` bình thường. State sẽ lưu tại `terraform.tfstate` trong thư mục gốc — **không commit file này lên git**.
 
-Client VPN yêu cầu server certificate và CA certificate đã được import vào AWS ACM trước khi `terraform apply`:
+---
+
+### Bước 4 — Tạo VPN certificates và import vào ACM (bỏ qua nếu chưa cần VPN)
+
+Client VPN yêu cầu server certificate và CA certificate đã có trong AWS ACM **trước khi** chạy `terraform apply`. Module `client_vpn` trong `main.tf` hiện đang được comment out — bỏ qua bước này hoàn toàn nếu chưa cần VPN.
+
+**Yêu cầu:** `git` và `easy-rsa` (script sẽ tự clone nếu chưa có).
 
 ```bash
+chmod +x scripts/generate_vpn_certs.sh
 bash scripts/generate_vpn_certs.sh
 ```
 
-Script sẽ in ra 2 ARN, điền vào `secret.tfvars`:
+Script thực hiện:
+1. Clone easy-rsa vào `/tmp/easy-rsa` (nếu chưa có).
+2. Khởi tạo PKI, build CA, tạo server cert và client cert.
+3. Import server cert + CA chain vào ACM, in ra 2 ARN.
 
-```hcl
-vpn_server_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxx"
-vpn_client_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/yyy"
+Output mẫu:
+
+```
+=== Import hoàn tất ===
+  export TF_VAR_vpn_server_certificate_arn="arn:aws:acm:us-east-1:123456789012:certificate/aaa-bbb"
+  export TF_VAR_vpn_client_certificate_arn="arn:aws:acm:us-east-1:123456789012:certificate/ccc-ddd"
 ```
 
-> Nếu chưa cần VPN: comment out `module "client_vpn"` trong `main.tf`, và vpn `client_vpn` trong `outputs.tf`, sau đó bỏ qua bước này.
+Điền 2 ARN này vào `secret.tfvars` (xem Bước 5), **không dùng** `export TF_VAR_*` vì project đã quản lý qua `secret.tfvars`.
 
-### Bước 5 — Chuẩn bị secret.tfvars
+Sau đó mở `main.tf` và **bỏ comment** block `module "client_vpn"`, đồng thời bỏ comment output `client_vpn_dns` trong `outputs.tf`.
+
+> **Không cần VPN:** Giữ `module "client_vpn"` commented out trong `main.tf`. Bỏ qua bước này hoàn toàn.
+
+---
+
+### Bước 5 — Chuẩn bị file `secret.tfvars`
 
 Tạo `secret.tfvars` từ file mẫu:
 
@@ -429,78 +477,170 @@ Tạo `secret.tfvars` từ file mẫu:
 cp secret.tfvars.example secret.tfvars
 ```
 
-Mở `secret.tfvars` và điền đầy đủ:
+Mở `secret.tfvars` và điền đầy đủ các giá trị bên dưới. File này **không được commit** (đã có trong `.gitignore`).
 
 ```hcl
-# Chọn phương thức xác thực (xem mục 5)
-aws_profile = "my-project"    # hoặc để "" nếu dùng env vars
+# ── Xác thực AWS — chọn 1 phương thức, bỏ trống phần còn lại ────
+aws_profile = "my-project"   # Phương thức 1: Named Profile (khuyến nghị local dev)
+                              # Hoặc để "" nếu dùng env vars / EC2 Instance Role
 
-# Thay <account_id> bằng AWS Account ID của bạn (12 chữ số)
-# (cũng cập nhật s3_bucket_name trong terraform.tfvars)
+# aws_access_key = "AKIAIOSFODNN7EXAMPLE"   # Phương thức 2: Access Key trực tiếp
+# aws_secret_key = "wJalrXUtnFEMI/..."
 
-# Passwords bắt buộc
+# aws_role_arn = "arn:aws:iam::123456789012:role/TerraformDeployRole"  # Phương thức 3
+
+# ── Passwords bắt buộc ───────────────────────────────────────────
 rds_password          = "YourSecureRDSPassword123!"
 ds_directory_password = "YourADPassword123@"
+
+# ── VPN cert ARNs (chỉ cần nếu dùng Client VPN) ──────────────────
+vpn_server_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/aaa-bbb"
+vpn_client_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/ccc-ddd"
 ```
 
-**Yêu cầu password cho AWS Managed AD:**
+**Yêu cầu password cho AWS Managed AD** (`ds_directory_password`):
 - Tối thiểu 8 ký tự
-- Chứa chữ hoa, chữ thường, số và ký tự đặc biệt (`!@#$%^&*`)
-- Không được chứa tên directory (corp, example, v.v.)
+- Phải có: chữ hoa, chữ thường, số, ký tự đặc biệt (`!@#$%^&*`)
+- Không được chứa tên domain — ví dụ nếu `ds_directory_name = "corp.example.com"` thì password không được chứa `corp` hay `example`
 
-### Bước 6 — Set biến nhạy cảm
+---
 
-### Bước 7 — Init, Plan, Apply (2 Giai đoạn)
+### Bước 6 — Cập nhật `terraform.tfvars`
 
-Do Transit Gateway và Route Tables có sự phụ thuộc vòng (circular dependency), việc triển khai cần được thực hiện qua 2 giai đoạn (2 lần apply).
+Mở `terraform.tfvars` và thay thế các placeholder còn lại:
 
-#### Giai đoạn 1: Khởi tạo hạ tầng & TGW Attachments
-Ở bước này, chúng ta giữ `enable_tgw_routes = false` (mặc định trong `terraform.tfvars`) để tạo VPC, Subnets và kết nối chúng vào Transit Gateway.
+```hcl
+# Bắt buộc: thay <account_id> bằng AWS Account ID thực (12 chữ số)
+# S3 bucket name phải globally unique trên toàn AWS
+s3_bucket_name = "s3-prod-shared-123456789012"
+
+# Xác nhận enable_tgw_routes = false (mặc định cho Apply giai đoạn 1)
+enable_tgw_routes = false
+```
+
+Lấy AWS Account ID nếu chưa biết:
 
 ```bash
-# 1. Init (chỉ cần chạy lần đầu hoặc sau khi thêm module)
+# Dùng AWS CLI nếu đã cài
+aws sts get-caller-identity --query Account --output text
+
+# Hoặc vào AWS Console → góc trên phải → tên account → Account ID
+```
+
+---
+
+### Bước 7 — Init, Plan và Apply theo 2 giai đoạn
+
+Do Transit Gateway attachment cần subnet ID (được tạo ở bước subnet), trong khi route table của subnet lại cần Transit Gateway attachment ID đã tồn tại — đây là circular dependency. Giải pháp dùng flag `enable_tgw_routes`: lần apply đầu tạo toàn bộ hạ tầng kể cả TGW attachment nhưng **chưa tạo route**, lần apply thứ hai mới bật route.
+
+#### Giai đoạn 1 — Tạo toàn bộ hạ tầng (chưa có TGW routes)
+
+```bash
+# Init — tải providers và modules (bắt buộc lần đầu)
 terraform init
 
-# 2. Plan giai đoạn 1 (enable_tgw_routes mặc định là false)
+# Format + validate + tạo plan (enable_tgw_routes=false, mặc định)
 bash scripts/plan.sh
 
-# 3. Apply giai đoạn 1
+# Xem plan output, kiểm tra số resource sẽ được tạo (~60–70 resources)
+# Sau đó apply
 terraform apply tfplan
 ```
 
-#### Giai đoạn 2: Cấu hình Routing liên VPC
-Sau khi hạ tầng cơ bản đã sẵn sàng, chúng ta kích hoạt việc tạo các route trong Route Tables để traffic có thể đi qua Transit Gateway.
+Khi Terraform hỏi xác nhận, nhập `yes`. Thời gian chờ giai đoạn 1: **~45–60 phút** (chủ yếu do RDS Multi-AZ ~15–20 phút và Directory Service ~20–40 phút).
+
+Sau khi apply xong, kiểm tra Transit Gateway attachment đã ở trạng thái `available`:
 
 ```bash
-# 1. Plan giai đoạn 2 (ghi đè biến enable_tgw_routes thành true)
+terraform output tgw_id
+# Dùng ID trên để kiểm tra trong AWS Console: VPC → Transit Gateways → Attachments
+# Hoặc dùng AWS CLI:
+aws ec2 describe-transit-gateway-attachments \
+  --filters "Name=transit-gateway-id,Values=<tgw_id>" \
+  --query "TransitGatewayAttachments[*].{State:State,VpcId:ResourceId}"
+```
+
+Chỉ tiếp tục Giai đoạn 2 khi **cả 2 attachment** đều ở trạng thái `available`.
+
+#### Giai đoạn 2 — Bật TGW routes liên VPC
+
+```bash
+# Plan giai đoạn 2 — truyền enable_tgw_routes=true qua tham số script
 bash scripts/plan.sh true
 
-# 2. Apply giai đoạn 2
+# Kiểm tra plan: chỉ nên thấy các aws_route resource được tạo thêm (4 routes)
+# Không có resource nào bị destroy
 terraform apply tfplan
 ```
 
-> **Lưu ý:** Bạn cũng có thể sửa trực tiếp `enable_tgw_routes = true` trong file `terraform.tfvars` rồi chạy `bash scripts/plan.sh` nếu không muốn dùng tham số dòng lệnh.
+Plan giai đoạn 2 tạo 4 routes:
+- `rt-prod-private-1a` → `10.1.0.0/16` via Transit Gateway
+- `rt-prod-private-1b` → `10.1.0.0/16` via Transit Gateway
+- `rt-rnd-private-2a` → `10.0.0.0/16` via Transit Gateway
+- `rt-rnd-private-2b` → `10.0.0.0/16` via Transit Gateway
 
-Hoặc apply trực tiếp (không qua script):
+> **Lưu ý:** Bạn cũng có thể sửa trực tiếp `enable_tgw_routes = true` trong `terraform.tfvars` thay vì dùng tham số script — cả hai cách cho kết quả giống nhau.
+
+Sau khi giai đoạn 2 apply xong, cập nhật lại `terraform.tfvars` để lưu trạng thái:
+
+```hcl
+enable_tgw_routes = true
+```
+
+#### Apply trực tiếp (không dùng script `plan.sh`)
+
+Nếu không muốn dùng script, có thể chạy thủ công:
 
 ```bash
-# Lần 1
-terraform plan -var-file="secret.tfvars" -var="enable_tgw_routes=false" -out=tfplan
+# Giai đoạn 1
+terraform plan  -var-file="secret.tfvars" -var="enable_tgw_routes=false" -out=tfplan
 terraform apply tfplan
 
-# Lần 2
-terraform plan -var-file="secret.tfvars" -var="enable_tgw_routes=true" -out=tfplan
+# Giai đoạn 2
+terraform plan  -var-file="secret.tfvars" -var="enable_tgw_routes=true" -out=tfplan
 terraform apply tfplan
 ```
 
-### Bước 8 — Tạo file .ovpn cho remote staff
+---
+
+### Bước 8 — Xác nhận hạ tầng hoạt động
+
+Sau khi apply thành công, lấy các output quan trọng:
 
 ```bash
+terraform output
+```
+
+Kiểm tra nhanh các thành phần chính:
+
+```bash
+# ALB DNS — truy cập thử từ browser hoặc curl
+terraform output prod_alb_dns
+curl -I http://$(terraform output -raw prod_alb_dns)
+
+# RDS endpoint — kiểm tra kết nối từ EC2 Web Portal (qua SSM Session Manager)
+terraform output rds_endpoint
+
+# EFS DNS — kiểm tra mount trên EC2 R&D
+terraform output efs_dns_name
+
+# Transit Gateway ID — kiểm tra routing giữa 2 VPC
+terraform output tgw_id
+```
+
+---
+
+### Bước 9 — Tạo file `.ovpn` cho remote staff (chỉ khi đã bật Client VPN)
+
+```bash
+chmod +x scripts/generate_ovpn.sh
 bash scripts/generate_ovpn.sh
-# Output: client-vpn.ovpn (KHÔNG commit file này)
+# Output: client-vpn.ovpn
 ```
 
-Phân phát file `.ovpn` cho từng nhân viên qua kênh bảo mật (không qua email thường).
+File `.ovpn` chứa private key của client — **không commit lên git, không gửi qua email thường**. Phân phát qua kênh bảo mật (1Password, Signal, portal nội bộ, v.v.).
+
+Mỗi nhân viên remote staff cài [AWS VPN Client](https://aws.amazon.com/vpn/client-vpn-download/) và import file `.ovpn` để kết nối.
 
 ---
 
