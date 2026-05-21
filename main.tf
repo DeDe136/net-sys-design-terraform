@@ -169,19 +169,21 @@ module "tgw_attachments" {
 # Phase 5: Security Groups
 # ─────────────────────────────────────────────────────────────────
 module "prod_security_groups" {
-  source       = "./modules/security_groups"
-  vpc_id       = module.prod_vpc.vpc_id
-  env          = "prod"
-  vpn_cidr     = var.vpn_client_cidr
-  rnd_vpc_cidr = var.rnd_vpc_cidr
+  source        = "./modules/security_groups"
+  vpc_id        = module.prod_vpc.vpc_id
+  env           = "prod"
+  vpn_cidr      = var.vpn_client_cidr
+  rnd_vpc_cidr  = var.rnd_vpc_cidr
+  prod_vpc_cidr = var.prod_vpc_cidr
 }
 
 module "rnd_security_groups" {
-  source       = "./modules/security_groups"
-  vpc_id       = module.rnd_vpc.vpc_id
-  env          = "rnd"
-  vpn_cidr     = var.vpn_client_cidr
-  rnd_vpc_cidr = var.rnd_vpc_cidr
+  source        = "./modules/security_groups"
+  vpc_id        = module.rnd_vpc.vpc_id
+  env           = "rnd"
+  vpn_cidr      = var.vpn_client_cidr
+  rnd_vpc_cidr  = var.rnd_vpc_cidr
+  prod_vpc_cidr = var.prod_vpc_cidr
 }
 
 # ─────────────────────────────────────────────────────────────────

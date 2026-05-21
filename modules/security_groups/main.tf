@@ -62,6 +62,14 @@ resource "aws_security_group" "ec2_web" {
     description     = "SSH from Bastion Host only"
   }
 
+  ingress {
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [var.prod_vpc_cidr, var.rnd_vpc_cidr]
+    description = "ICMP từ Production VPC và R&D VPC — cho phép ping nội bộ cross-VPC"
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -101,6 +109,14 @@ resource "aws_security_group" "ec2_erp" {
     protocol        = "tcp"
     security_groups = [aws_security_group.bastion[0].id]
     description     = "SSH from Bastion Host only"
+  }
+
+  ingress {
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [var.prod_vpc_cidr, var.rnd_vpc_cidr]
+    description = "ICMP từ Production VPC và R&D VPC — cho phép ping nội bộ cross-VPC"
   }
 
   egress {
@@ -196,6 +212,14 @@ resource "aws_security_group" "bastion" {
     description = "SSH from Client VPN"
   }
 
+  ingress {
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [var.prod_vpc_cidr, var.rnd_vpc_cidr]
+    description = "ICMP từ Production VPC và R&D VPC — cho phép ping nội bộ cross-VPC"
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -227,6 +251,14 @@ resource "aws_security_group" "rnd_ec2" {
     protocol    = "tcp"
     cidr_blocks = [var.rnd_vpc_cidr]
     description = "All internal R&D VPC"
+  }
+
+  ingress {
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = [var.rnd_vpc_cidr, var.prod_vpc_cidr]
+    description = "ICMP từ R&D VPC và Production VPC — cho phép ping nội bộ cross-VPC"
   }
 
   egress {
