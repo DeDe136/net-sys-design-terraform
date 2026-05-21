@@ -1,11 +1,6 @@
 # ──────────────────────────────────────────────────────────────────
 # templates/client.ovpn.tpl
-# Template file .ovpn cho Client VPN.
-# Sau khi terraform apply, lấy giá trị từ output và điền vào:
-#   terraform output -raw client_vpn_dns
-#
-# Cách tạo file .ovpn hoàn chỉnh:
-#   bash scripts/generate_ovpn.sh
+# Template cho AWS Client VPN (mutual TLS + Active Directory).
 # ──────────────────────────────────────────────────────────────────
 
 client
@@ -15,10 +10,14 @@ remote ${vpn_endpoint_dns} 443
 remote-random-hostname
 resolv-retry infinite
 nobind
+persist-key
+persist-tun
 remote-cert-tls server
 cipher AES-256-GCM
+auth SHA256
 verb 3
 reneg-sec 0
+auth-user-pass
 
 <ca>
 ${ca_cert}
