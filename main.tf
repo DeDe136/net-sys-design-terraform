@@ -211,17 +211,21 @@ module "prod_alb" {
 
 # ─────────────────────────────────────────────────────────────────
 # EC2 Auto Scaling — Production
+#
+# FIX: Bỏ hardcode ASG sizes, dùng var.asg_* từ terraform.tfvars
+#   asg_web_desired = 2 → ASG tạo 1 instance ở mỗi AZ (1a + 1b)
+#   asg_erp_desired = 2 → ASG tạo 1 instance ở mỗi AZ (1a + 1b)
 # ─────────────────────────────────────────────────────────────────
 module "prod_ec2" {
   source        = "./modules/ec2"
   env           = "prod"
   ami           = var.ec2_ami
-  instance_type = "t3.micro"  # Reduced to stay within 16 vCPU free tier limit. Change to var.ec2_instance_type for production.
+  instance_type = var.ec2_instance_type
 
   iam_instance_profile = var.ec2_instance_profile_name
 
   # Bastion Host — đặt ở Public Subnet (AZ-1a + AZ-1b)
-  bastion_instance_type = "t3.micro"
+  bastion_instance_type = var.ec2_instance_type
   bastion_subnet_1a_id  = module.prod_subnets.public_subnet_1a_id
   bastion_subnet_1b_id  = module.prod_subnets.public_subnet_1b_id
   sg_bastion_id         = module.prod_security_groups.sg_bastion_id
@@ -242,32 +246,33 @@ module "prod_ec2" {
   # ERP/CRM nhận traffic nội bộ từ Web Portal, không gắn ALB
   alb_web_tg_arn = module.prod_alb.web_tg_arn
 
-  # Reduced ASG sizes to fit within 16 vCPU free tier limit.
-  # vCPU budget: bastion×2(1) + web×1(1) + erp×1(1) + rnd×2(1) = 6 vCPU total.
-  # Restore var.asg_* when account vCPU limit is increased.
-  asg_web_min     = 1
-  asg_web_max     = 2
-  asg_web_desired = 1
-  asg_erp_min     = 1
-  asg_erp_max     = 2
-  asg_erp_desired = 1
+  # Dùng var.asg_* từ terraform.tfvars (desired=2 → 1 instance mỗi AZ)
+  asg_web_min     = var.asg_web_min
+  asg_web_max     = var.asg_web_max
+  asg_web_desired = var.asg_web_desired
+  asg_erp_min     = var.asg_erp_min
+  asg_erp_max     = var.asg_erp_max
+  asg_erp_desired = var.asg_erp_desired
 }
 
 # ─────────────────────────────────────────────────────────────────
 # EC2 — R&D Testing (rnd_instance_count_per_az per AZ, no ASG)
+#
+# FIX: Bỏ hardcode rnd_instance_count_per_az = 1, dùng var từ tfvars
+#   rnd_instance_count_per_az = 1 → 1 instance × 2 AZ = 2 instance R&D
 # ─────────────────────────────────────────────────────────────────
 module "rnd_ec2" {
   source        = "./modules/ec2"
   env           = "rnd"
   ami           = var.ec2_ami
-  instance_type = "t3.micro"  # Reduced to stay within 16 vCPU free tier limit.
+  instance_type = var.ec2_instance_type
 
   iam_instance_profile = var.ec2_instance_profile_name
 
   rnd_subnet_2a_id          = module.rnd_subnets.private_subnet_1a_id
   rnd_subnet_2b_id          = module.rnd_subnets.private_subnet_1b_id
   sg_rnd_id                 = module.rnd_security_groups.sg_rnd_ec2_id
-  rnd_instance_count_per_az = 1  # 1 per AZ × 2 AZ = 2 vCPU. Increase when vCPU limit raised.
+  rnd_instance_count_per_az = var.rnd_instance_count_per_az
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -283,7 +288,7 @@ module "prod_rds" {
   sg_rds_id      = module.prod_security_groups.sg_rds_id
   engine         = var.rds_engine
   engine_version = var.rds_engine_version
-  instance_class = "db.t3.micro"  # Free Tier eligible. Restore to var.rds_instance_class for production.
+  instance_class = var.rds_instance_class
   db_name        = var.rds_db_name
   username       = var.rds_username
   password       = var.rds_password

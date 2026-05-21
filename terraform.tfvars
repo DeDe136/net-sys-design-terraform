@@ -35,20 +35,24 @@ ec2_ami           = "ami-0c02fb55956c7d316" # Amazon Linux 2 — us-east-1
 
 ec2_instance_profile_name = "ec2-instance-profile"
 
+# vCPU budget (giới hạn 16 vCPU, t3.micro = 2 vCPU):
+#   Prod: bastion×2 + web×2 (desired=2, 1 mỗi AZ) + erp×2 (desired=2, 1 mỗi AZ) = 6 EC2 = 12 vCPU
+#   R&D:  rnd×1×2 AZ = 2 EC2 = 4 vCPU
+#   Tổng: 8 EC2 = 16 vCPU
 asg_web_min     = 1
-asg_web_max     = 4
-asg_web_desired = 2
+asg_web_max     = 2
+asg_web_desired = 2  # 1 instance mỗi AZ (1a + 1b)
 
 asg_erp_min     = 1
-asg_erp_max     = 4
-asg_erp_desired = 2
+asg_erp_max     = 2
+asg_erp_desired = 2  # 1 instance mỗi AZ (1a + 1b)
 
-rnd_instance_count_per_az = 4
+rnd_instance_count_per_az = 1  # 1 instance × 2 AZ = 2 EC2 R&D
 
 # ── RDS ───────────────────────────────────────────────────────────
 rds_engine         = "mysql"
 rds_engine_version = "8.0"
-rds_instance_class = "db.t3.medium"
+rds_instance_class = "db.t3.micro"  # Free Tier eligible
 rds_db_name        = "proddb"
 rds_username       = "admin"
 
@@ -65,17 +69,13 @@ vpn_client_cidr = "172.16.0.0/22"
 s3_bucket_name = "s3-prod-shared-864304568243-v2"
 
 # ── TGW Dedicated Subnets (/28) ───────────────────────────────────
-# FIX 2: Tách riêng khỏi EC2 private subnets theo AWS best practice.
-# Prod VPC (10.0.0.0/16): dùng 10.0.4.0/27 chia đôi thành 2 /28
 prod_tgw_subnet_1a_cidr = "10.0.4.0/28"   # 10.0.4.0  – 10.0.4.15  → AZ-1a
 prod_tgw_subnet_1b_cidr = "10.0.4.16/28"  # 10.0.4.16 – 10.0.4.31  → AZ-1b
 
-# R&D VPC (10.1.0.0/16): dùng 10.1.3.0/27 chia đôi thành 2 /28
 rnd_tgw_subnet_2a_cidr = "10.1.3.0/28"    # 10.1.3.0  – 10.1.3.15  → AZ-2a
 rnd_tgw_subnet_2b_cidr = "10.1.3.16/28"   # 10.1.3.16 – 10.1.3.31  → AZ-2b
 
 # ── TGW Route Flag ────────────────────────────────────────────────
-# FIX 1: Workflow 2 lần apply để tránh circular dependency.
 # Lần 1 apply: giữ false → tạo hạ tầng + TGW attachments
 # Lần 2 apply: đổi thành true → tạo aws_route TGW trong private route tables
 enable_tgw_routes = false

@@ -93,7 +93,7 @@ resource "aws_nat_gateway" "nat_1b" {
   depends_on    = [aws_eip.nat_1b]
 }
 
-# ── Route Tables ─────────────────────────────────────────────────
+# ── Route Tables ──────────────────────────────────────────────────
 # Public RT → IGW
 resource "aws_route_table" "public" {
   vpc_id = var.vpc_id
@@ -115,18 +115,23 @@ resource "aws_route_table_association" "public_1b" {
   route_table_id = aws_route_table.public.id
 }
 
-# Private RT AZ-1a → NAT only
-# Route TGW KHÔNG đặt inline ở đây — tạo riêng bằng aws_route trong root
-# main.tf SAU KHI TGW attachment đã hoàn tất (tránh circular dependency
-# subnets ↔ tgw_attachments và lỗi AWS API validate attachment chưa tồn tại).
+# ── Private RT AZ-1a ─────────────────────────────────────────────
+# FIX: Bỏ inline route block ra khỏi aws_route_table.
+# Lý do: Terraform bị conflict khi cùng lúc có inline route block
+# trong aws_route_table VÀ aws_route resource riêng biệt trỏ vào
+# cùng 1 route table → Terraform xóa route TGW mỗi lần apply.
+# Giải pháp: dùng toàn bộ aws_route riêng biệt (NAT + TGW đều tách ra).
 resource "aws_route_table" "private_1a" {
   vpc_id = var.vpc_id
   tags   = { Name = "rt-${var.name_prefix}-private-1a" }
+  # Không có inline route — tất cả route tạo riêng bằng aws_route bên dưới
+}
 
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat_1a.id
-  }
+resource "aws_route" "private_1a_nat" {
+  route_table_id         = aws_route_table.private_1a.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.nat_1a.id
+  depends_on             = [aws_route_table.private_1a]
 }
 
 resource "aws_route_table_association" "private_1a" {
@@ -134,15 +139,18 @@ resource "aws_route_table_association" "private_1a" {
   route_table_id = aws_route_table.private_1a.id
 }
 
-# Private RT AZ-1b → NAT only
+# ── Private RT AZ-1b ─────────────────────────────────────────────
 resource "aws_route_table" "private_1b" {
   vpc_id = var.vpc_id
   tags   = { Name = "rt-${var.name_prefix}-private-1b" }
+  # Không có inline route — tất cả route tạo riêng bằng aws_route bên dưới
+}
 
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat_1b.id
-  }
+resource "aws_route" "private_1b_nat" {
+  route_table_id         = aws_route_table.private_1b.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.nat_1b.id
+  depends_on             = [aws_route_table.private_1b]
 }
 
 resource "aws_route_table_association" "private_1b" {

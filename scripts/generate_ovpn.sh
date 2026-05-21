@@ -11,11 +11,14 @@ PKI_DIR="/tmp/easy-rsa/easyrsa3/pki"
 OUTPUT_FILE="client-vpn.ovpn"
 TEMPLATE_FILE="templates/client.ovpn.tpl"
 
+# FIX: Dùng đúng tên CN mà generate_vpn_certs.sh đã tạo
+CLIENT_CN="client.vpn.internal"
+
 VPN_DNS=$(terraform output -raw client_vpn_dns)
 
 CA_CERT=$(cat "${PKI_DIR}/ca.crt")
-CLIENT_CERT=$(cat "${PKI_DIR}/issued/vpn-client.crt")
-CLIENT_KEY=$(cat "${PKI_DIR}/private/vpn-client.key")
+CLIENT_CERT=$(cat "${PKI_DIR}/issued/${CLIENT_CN}.crt")
+CLIENT_KEY=$(cat "${PKI_DIR}/private/${CLIENT_CN}.key")
 
 sed \
   -e "s|\${vpn_endpoint_dns}|${VPN_DNS}|g" \
