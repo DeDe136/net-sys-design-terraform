@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────
-# scripts/generate_ovpn.sh  (v2 — fix cert format)
+# scripts/generate_ovpn.sh  (v3 — fix wildcard DNS)
 # ──────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -37,7 +37,13 @@ echo "[CHECK] Kiểm tra prerequisites..."
 echo "[TERRAFORM] Lấy client_vpn_dns..."
 VPN_DNS=$(terraform output -raw client_vpn_dns 2>/dev/null || true)
 [[ -z "${VPN_DNS}" ]] && echo "ERROR: terraform output client_vpn_dns rỗng." && exit 1
-echo "    VPN DNS: ${VPN_DNS}"
+echo "    VPN DNS (raw): ${VPN_DNS}"
+
+# ── Thay wildcard * thành prefix cố định để OpenVPN resolve được ────
+# AWS trả về dạng *.cvpn-endpoint-xxx... — OpenVPN không resolve được wildcard.
+# Thay * bằng "vpn" để có hostname hợp lệ: vpn.cvpn-endpoint-xxx...
+VPN_DNS="${VPN_DNS/\*./vpn.}"
+echo "    VPN DNS (resolved): ${VPN_DNS}"
 
 # ── Ghi VPN_DNS ra temp file (tránh shell injection) ─────────────────
 TMPDIR_WORK=$(mktemp -d)
@@ -66,9 +72,9 @@ tmp_dir       = sys.argv[3]
 
 with open(template_path)                        as f: template  = f.read()
 with open(f"{tmp_dir}/vpn_dns.txt")             as f: vpn_dns   = f.read().strip()
-with open(f"{tmp_dir}/ca.crt")                  as f: ca_cert   = f.read().strip()
-with open(f"{tmp_dir}/client.crt")              as f: client_cert = f.read().strip()
-with open(f"{tmp_dir}/client.key")              as f: client_key  = f.read().strip()
+with open(f"{tmp_dir}/ca.crt")                  as f: ca_cert   = f.read().strip().replace('\r\n', '\n').replace('\r', '\n')
+with open(f"{tmp_dir}/client.crt")              as f: client_cert = f.read().strip().replace('\r\n', '\n').replace('\r', '\n')
+with open(f"{tmp_dir}/client.key")              as f: client_key  = f.read().strip().replace('\r\n', '\n').replace('\r', '\n')
 
 replacements = {
     "${vpn_endpoint_dns}": vpn_dns,
@@ -91,7 +97,7 @@ for line in lines:
     # Bỏ qua các dòng comment (#) và dòng trống ở đầu file template
     if skip_header and (line.startswith("#") or line.strip() == ""):
         continue
-    
+
     skip_header = False
     body.append(line)
 
@@ -151,7 +157,7 @@ echo "  VPN DNS: ${VPN_DNS}"
 echo "  Client : ${CLIENT_CN}"
 echo ""
 echo "Hướng dẫn cho staff:"
-echo "  1. Cài AWS VPN Client: https://aws.amazon.com/vpn/client-vpn-download/"
+echo "  1. Cài AWS VPN Client: https://aws.amazon.com/vpn/client-vpn-download/)"
 echo "  2. File → Manage Profiles → Add Profile → chọn ${OUTPUT_FILE}"
 echo "  3. Kết nối và nhập AD credentials (username / password)"
 echo ""

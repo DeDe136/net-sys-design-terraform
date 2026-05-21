@@ -97,11 +97,90 @@ resource "aws_launch_template" "web" {
 
   key_name = var.key_name != "" ? var.key_name : null
 
-  # User data: cập nhật gói qua NAT Gateway
+  # User data: Cài Nginx Web Portal với health check endpoint cho ALB
   user_data = base64encode(<<-USERDATA
     #!/bin/bash
+    # ══════════════════════════════════════════════════════════════════
+    # Nginx Web Server - Production Environment
+    # Vị trí: Private subnet, EC2 AZ-1a/1b (Auto Scaling Group)
+    # Purpose: Web Portal - Load balanced via ALB (port 80)
+    # Health Check: GET /health (ALB requires 200 OK)
+    # Networking: Outbound via NAT Gateway, Inbound từ ALB
+    # ══════════════════════════════════════════════════════════════════
+    set -euo pipefail
+    
+    # 1. Cập nhật hệ thống
     yum update -y
-    # Traffic ra internet đi qua NAT Gateway (route table private subnet)
+    
+    # 2. Cài Nginx
+    yum install -y nginx
+    
+    # 3. Tạo trang index.html cho Web Portal
+    mkdir -p /var/www/html
+    cat > /var/www/html/index.html <<'EOF'
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Web Portal - AWS Production</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #FF9900; }
+        .info { background: #f0f0f0; padding: 15px; border-left: 4px solid #FF9900; margin: 10px 0; }
+        .label { font-weight: bold; color: #333; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>🚀 Nginx Web Server - Production Environment</h1>
+        <div class="info">
+          <p class="label">Environment:</p> Amazon Linux 2 - EC2 Portal AZ-1a/1b
+        </div>
+        <div class="info">
+          <p class="label">Service:</p> Web Portal (Load Balanced via AWS Application Load Balancer)
+        </div>
+        <div class="info">
+          <p class="label">Status:</p> ✅ Active and Running
+        </div>
+        <div class="info">
+          <p class="label">Network:</p> Private Subnet → NAT Gateway → Internet
+        </div>
+        <div class="info">
+          <p class="label">Health Check:</p> Endpoint: /health (Port 80)
+        </div>
+        <hr style="margin-top: 30px; border: none; border-top: 1px solid #ddd;">
+        <p style="color: #666; font-size: 12px;">Deployed by Terraform | AWS Infrastructure as Code</p>
+      </div>
+    </body>
+    </html>
+    EOF
+    
+    # 4. Cấu hình Nginx - Health Check endpoint + Web Portal
+    cat > /etc/nginx/conf.d/web-portal.conf <<'EOF'
+    server {
+      listen 80 default_server;
+      server_name _;
+      root /var/www/html;
+      
+      # ─── ALB Health Check ───────────────────────────────────────
+      location /health {
+        access_log off;
+        return 200 "OK - Web Portal healthy\n";
+        add_header Content-Type text/plain;
+      }
+      
+      # ─── Web Portal Application ──────────────────────────────────
+      location / {
+        index index.html;
+        try_files $uri $uri/ =404;
+      }
+    }
+    EOF
+    
+    # 5. Khởi động Nginx
+    nginx -t && systemctl start nginx && systemctl enable nginx
+    
+    echo "[OK] Nginx Web Portal started - Ready for ALB health check"
   USERDATA
   )
 

@@ -7,7 +7,6 @@ client
 dev tun
 proto udp
 remote ${vpn_endpoint_dns} 443
-remote-random-hostname
 resolv-retry infinite
 nobind
 persist-key
