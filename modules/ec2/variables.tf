@@ -2,22 +2,6 @@ variable "env"           { type = string }
 variable "ami"           { type = string }
 variable "instance_type" { type = string }
 
-# ─────────────────────────────────────────────────────────────────
-# Custom AMI IDs (optional) — for pre-built images with Nginx/services
-# If provided, these take precedence over var.ami
-# ─────────────────────────────────────────────────────────────────
-variable "web_portal_ami_id" {
-  type    = string
-  default = ""
-  description = "Custom AMI ID for Web Portal (pre-built with Nginx). If empty, uses base var.ami + user_data."
-}
-
-variable "erp_ami_id" {
-  type    = string
-  default = ""
-  description = "Custom AMI ID for ERP/CRM instance. If empty, uses base var.ami + user_data."
-}
-
 # Bastion Host variables (Production only)
 variable "bastion_instance_type" {
   type        = string

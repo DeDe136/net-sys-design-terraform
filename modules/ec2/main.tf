@@ -79,7 +79,7 @@ resource "aws_instance" "bastion_1b" {
 resource "aws_launch_template" "web" {
   count         = var.env == "prod" ? 1 : 0
   name_prefix   = "lt-prod-web-portal-"
-  image_id      = var.web_portal_ami_id != "" ? var.web_portal_ami_id : var.ami
+  image_id      = var.ami
   instance_type = var.instance_type
 
   network_interfaces {
@@ -97,31 +97,21 @@ resource "aws_launch_template" "web" {
 
   key_name = var.key_name != "" ? var.key_name : null
 
-  # User data: Start Nginx service (if using custom AMI, Nginx already installed)
-  #            If using base image, this provides fallback initialization
-  user_data = base64encode(var.web_portal_ami_id != "" ? 
-    # Custom AMI path: Nginx already installed, just ensure service is running
-    <<-USERDATA
+  # User data: Cài Nginx Web Portal với health check endpoint cho ALB
+  user_data = base64encode(<<-USERDATA
 #!/bin/bash
 set -euo pipefail
-echo "[$(date)] Starting Nginx service..."
-systemctl start nginx
-systemctl enable nginx
-echo "[$(date)] ✓ Nginx service started"
-    USERDATA
-    :
-    # Base image fallback: Install Nginx if needed
-    <<-USERDATA
-#!/bin/bash
-set -euo pipefail
-echo "[$(date)] Updating system..."
+
+echo "[$(date)] Updating system packages..."
 yum update -y
 
 echo "[$(date)] Installing Nginx..."
 yum install -y nginx
 
-echo "[$(date)] Creating web content..."
+echo "[$(date)] Creating web content directory..."
 mkdir -p /var/www/html
+
+echo "[$(date)] Creating index.html..."
 cat > /var/www/html/index.html <<'EOF'
 <!DOCTYPE html>
 <html>
@@ -139,13 +129,16 @@ cat > /var/www/html/index.html <<'EOF'
   <div class="container">
     <h1>🚀 Nginx Web Server - Production</h1>
     <div class="info">
-      <p class="label">Status:</p> ✅ Active and Running
-    </div>
-    <div class="info">
       <p class="label">Environment:</p> Amazon Linux 2 - EC2 Portal
     </div>
     <div class="info">
-      <p class="label">Health Check:</p> GET /health (Port 80)
+      <p class="label">Status:</p> ✅ Active and Running
+    </div>
+    <div class="info">
+      <p class="label">Load Balancer:</p> AWS ALB (Port 80)
+    </div>
+    <div class="info">
+      <p class="label">Health Check:</p> GET /health
     </div>
   </div>
 </body>
@@ -159,12 +152,14 @@ server {
   server_name _;
   root /var/www/html;
   
+  # ALB Health Check endpoint
   location /health {
     access_log off;
     return 200 "OK\n";
     add_header Content-Type text/plain;
   }
   
+  # Web Portal application
   location / {
     index index.html;
     try_files $uri $uri/ =404;
@@ -172,10 +167,17 @@ server {
 }
 EOF
 
-echo "[$(date)] Starting Nginx..."
-nginx -t && systemctl start nginx && systemctl enable nginx
-echo "[$(date)] ✓ Nginx started successfully"
-    USERDATA
+echo "[$(date)] Testing Nginx configuration..."
+if nginx -t; then
+  echo "[$(date)] Starting Nginx service..."
+  systemctl start nginx
+  systemctl enable nginx
+  echo "[$(date)] ✓ Nginx service started successfully"
+else
+  echo "[$(date)] ERROR: Nginx configuration test failed!"
+  exit 1
+fi
+  USERDATA
   )
 
   tag_specifications {
@@ -195,10 +197,9 @@ resource "aws_autoscaling_group" "web" {
   vpc_zone_identifier = var.web_subnet_ids
 
   # ALB chỉ gắn với Web Portal
-  target_group_arns        = [var.alb_web_tg_arn]
-  health_check_type        = "ELB"
-  # Grace period: 180s for custom AMI (Nginx already running), 600s for base image with user_data
-  health_check_grace_period = var.web_portal_ami_id != "" ? 180 : 600
+  target_group_arns         = [var.alb_web_tg_arn]
+  health_check_type         = "ELB"
+  health_check_grace_period = 900  # 15 min — đủ thời gian cho user_data cài Nginx
 
   launch_template {
     id      = aws_launch_template.web[0].id

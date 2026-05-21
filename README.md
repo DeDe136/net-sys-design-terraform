@@ -67,7 +67,7 @@ ALB (Internet-facing, public subnets AZ-1a + AZ-1b)
 │           │ (NAT outbound)      │                   │
 │  ┌────────▼─────────┐  ┌────────▼─────────┐         │
 │  │ Private Subnet   │  │ Private Subnet   │         │
-│  │ 4x EC2 R&D       │  │ 4x EC2 R&D       │         │
+│  │ 1x EC2 R&D       │  │ 1x EC2 R&D       │         │
 │  │ (mount EFS)      │  │ (mount EFS)      │         │
 │  └──────────────────┘  └──────────────────┘         │
 │                                                     │
@@ -90,7 +90,7 @@ ALB (Internet-facing, public subnets AZ-1a + AZ-1b)
 | RDS MySQL 8.0 | Production | Multi-AZ (Primary AZ-1a + Standby AZ-1b) |
 | Directory Service | Production | AWS Managed Microsoft AD, xác thực VPN users và người dùng nội bộ |
 | Bastion Host | Production | 1 instance/AZ (AZ-1a + AZ-1b), nằm ở Public Subnet, là jump host SSH duy nhất vào EC2 private — chỉ cho phép SSH từ Client VPN CIDR |
-| EC2 R&D | R&D | 4 instance/AZ, không gắn ALB, cập nhật qua NAT |
+| EC2 R&D | R&D | 1 instance/AZ, không gắn ALB, cập nhật qua NAT |
 | EFS | R&D | Shared storage mount vào tất cả EC2 R&D |
 | S3 | Shared | Truy cập từ cả 2 VPC qua Gateway Endpoint |
 | Transit Gateway | Shared | Kết nối Production ↔ R&D ↔ Client VPN |
@@ -149,7 +149,7 @@ terraform-project/
 │   │   │                           #         Launch Template + ASG cho web-portal
 │   │   │                           #         Launch Template + ASG cho erp-crm
 │   │   │                           #         (erp-crm KHÔNG gắn ALB target group)
-│   │   │                           #   rnd:  aws_instance × N/AZ, user_data
+│   │   │                           #   rnd:  1/AZ, user_data
 │   │   │                           #         cập nhật gói qua NAT Gateway
 │   │   ├── variables.tf            #   env, ami, instance_type, bastion_instance_type,
 │   │   │                           #   bastion_subnet_1a/1b_id, sg_bastion_id,
@@ -203,7 +203,7 @@ terraform-project/
 │   ├── production/
 │   │   └── terraform.tfvars        # Prod: instance type lớn hơn, ASG cao hơn
 │   └── rnd/
-│       └── terraform.tfvars        # R&D: t3.micro, 4 instances/AZ
+│       └── terraform.tfvars        # R&D: t3.micro, 1 instances/AZ
 │
 ├── global/                         # Tài nguyên IAM dùng chung (deploy 1 lần)
 │   └── iam.tf                      # ec2-instance-role (SSM + S3),
@@ -723,9 +723,11 @@ terraform workspace select production
 | Tham số | `terraform.tfvars` (default) | `environments/production/` | `environments/rnd/` |
 |---|---|---|---|
 | `ec2_instance_type` | `t3.micro` | `t3.small` | `t3.micro` |
+| `rds_instance_class` | `db.t3.micro` | `db.t3.medium` | `db.t3.micro` |
 | `asg_web_min` | 1 | 2 | — |
-| `asg_web_max` | 4 | 6 | — |
-| `rnd_instance_count_per_az` | 4 | — | 4 |
+| `asg_web_max` | 2 | 6 | — |
+| `asg_web_desired` | 2 | 2 | — |
+| `rnd_instance_count_per_az` | 1 | — | 4 |
 
 ---
 
