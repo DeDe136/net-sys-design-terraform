@@ -210,6 +210,12 @@ module "prod_ec2" {
 
   iam_instance_profile = var.ec2_instance_profile_name
 
+  # Bastion Host — đặt ở Public Subnet (AZ-1a + AZ-1b)
+  bastion_instance_type = "t3.micro"
+  bastion_subnet_1a_id  = module.prod_subnets.public_subnet_1a_id
+  bastion_subnet_1b_id  = module.prod_subnets.public_subnet_1b_id
+  sg_bastion_id         = module.prod_security_groups.sg_bastion_id
+
   web_subnet_ids = [
     module.prod_subnets.private_subnet_1a_id,
     module.prod_subnets.private_subnet_1b_id,
@@ -352,6 +358,11 @@ module "s3" {
 # Bước 1: chạy scripts/generate_vpn_certs.sh
 # Bước 2: điền vpn_server_certificate_arn + vpn_client_certificate_arn vào secret.tfvars
 # Bước 3: bỏ comment block bên dưới rồi terraform apply
+#
+# FIX: Đã bổ sung directory_id để kích hoạt xác thực 2 lớp:
+#   Layer 1 — Certificate (mutual TLS): client phải có cert hợp lệ
+#   Layer 2 — Active Directory:         user phải đăng nhập username/password
+#                                        qua AWS Managed Microsoft AD
 # ─────────────────────────────────────────────────────────────────
 # module "client_vpn" {
 #   source              = "./modules/vpn"
@@ -363,4 +374,10 @@ module "s3" {
 #
 #   server_certificate_arn = var.vpn_server_certificate_arn
 #   client_certificate_arn = var.vpn_client_certificate_arn
+#
+#   # Truyền Directory ID để VPN xác thực user qua Active Directory
+#   # Directory Service phải được tạo xong trước khi tạo VPN endpoint
+#   directory_id = module.prod_directory_service.directory_id
+#
+#   depends_on = [module.prod_directory_service]
 # }

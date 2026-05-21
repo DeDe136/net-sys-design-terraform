@@ -2,6 +2,28 @@ variable "env"           { type = string }
 variable "ami"           { type = string }
 variable "instance_type" { type = string }
 
+# Bastion Host variables (Production only)
+variable "bastion_instance_type" {
+  type        = string
+  default     = "t3.micro"
+  description = "Instance type cho Bastion Host — không cần mạnh, chỉ là jump host"
+}
+variable "bastion_subnet_1a_id" {
+  type        = string
+  default     = ""
+  description = "Public Subnet AZ-1a — nơi đặt Bastion Host"
+}
+variable "bastion_subnet_1b_id" {
+  type        = string
+  default     = ""
+  description = "Public Subnet AZ-1b — nơi đặt Bastion Host (HA)"
+}
+variable "sg_bastion_id" {
+  type        = string
+  default     = ""
+  description = "Security Group ID của Bastion Host"
+}
+
 # Optional: IAM instance profile for SSM access
 variable "iam_instance_profile" {
   type    = string

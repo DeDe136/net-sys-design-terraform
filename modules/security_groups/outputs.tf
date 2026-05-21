@@ -1,4 +1,5 @@
 output "sg_alb_id"     { value = length(aws_security_group.alb) > 0 ? aws_security_group.alb[0].id : null }
+output "sg_bastion_id" { value = length(aws_security_group.bastion) > 0 ? aws_security_group.bastion[0].id : null }
 output "sg_ec2_web_id" { value = length(aws_security_group.ec2_web) > 0 ? aws_security_group.ec2_web[0].id : null }
 output "sg_ec2_erp_id" { value = length(aws_security_group.ec2_erp) > 0 ? aws_security_group.ec2_erp[0].id : null }
 output "sg_rds_id"     { value = length(aws_security_group.rds) > 0 ? aws_security_group.rds[0].id : null }

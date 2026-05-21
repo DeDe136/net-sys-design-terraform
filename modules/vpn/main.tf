@@ -12,9 +12,17 @@ resource "aws_ec2_client_vpn_endpoint" "this" {
   client_cidr_block      = var.client_cidr
   split_tunnel           = true   # Chỉ route traffic nội bộ qua VPN
 
+  # Layer 1: Mutual TLS — client phải có certificate hợp lệ
   authentication_options {
     type                       = "certificate-authentication"
     root_certificate_chain_arn = var.client_certificate_arn
+  }
+
+  # Layer 2: Active Directory — user phải xác thực username/password với Directory Service
+  # Kết hợp cả 2 layer: certificate + AD credentials (MFA theo kiến trúc)
+  authentication_options {
+    type                = "directory-service-authentication"
+    active_directory_id = var.directory_id
   }
 
   connection_log_options {

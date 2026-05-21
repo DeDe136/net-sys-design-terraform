@@ -8,6 +8,70 @@
 # ══════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────
+# PRODUCTION — Bastion Host (HA: 1 instance mỗi AZ)
+#
+# Vị trí: Public Subnet (AZ-1a + AZ-1b) — Production VPC
+# Luồng SSH: Remote Staff → Client VPN → Bastion → EC2 Private Subnet
+#
+# Bastion KHÔNG gắn ALB. Staff SSH vào Bastion trước (port 22),
+# sau đó jump tiếp vào Web Portal / ERP/CRM qua private IP.
+# ─────────────────────────────────────────────────────────────────
+resource "aws_instance" "bastion_1a" {
+  count         = var.env == "prod" ? 1 : 0
+  ami           = var.ami
+  instance_type = var.bastion_instance_type
+
+  subnet_id                   = var.bastion_subnet_1a_id
+  vpc_security_group_ids      = [var.sg_bastion_id]
+  associate_public_ip_address = false  # Staff reach qua VPN private IP, không cần Public IP
+  key_name                    = var.key_name != "" ? var.key_name : null
+  iam_instance_profile        = var.iam_instance_profile != "" ? var.iam_instance_profile : null
+
+  user_data = base64encode(<<-USERDATA
+    #!/bin/bash
+    yum update -y
+    # Hardening cơ bản: chỉ cho phép SSH, disable password auth
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    systemctl restart sshd
+  USERDATA
+  )
+
+  tags = {
+    Name = "prod-bastion-1a"
+    Env  = "prod"
+    Role = "bastion"
+    AZ   = "AZ-1a"
+  }
+}
+
+resource "aws_instance" "bastion_1b" {
+  count         = var.env == "prod" ? 1 : 0
+  ami           = var.ami
+  instance_type = var.bastion_instance_type
+
+  subnet_id                   = var.bastion_subnet_1b_id
+  vpc_security_group_ids      = [var.sg_bastion_id]
+  associate_public_ip_address = false  # Staff reach qua VPN private IP, không cần Public IP
+  key_name                    = var.key_name != "" ? var.key_name : null
+  iam_instance_profile        = var.iam_instance_profile != "" ? var.iam_instance_profile : null
+
+  user_data = base64encode(<<-USERDATA
+    #!/bin/bash
+    yum update -y
+    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    systemctl restart sshd
+  USERDATA
+  )
+
+  tags = {
+    Name = "prod-bastion-1b"
+    Env  = "prod"
+    Role = "bastion"
+    AZ   = "AZ-1b"
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────
 # PRODUCTION — Launch Templates + Auto Scaling Groups
 # ─────────────────────────────────────────────────────────────────
 

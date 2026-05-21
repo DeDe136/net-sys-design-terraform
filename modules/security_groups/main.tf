@@ -54,6 +54,14 @@ resource "aws_security_group" "ec2_web" {
     description     = "HTTPS from ALB"
   }
 
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion[0].id]
+    description     = "SSH from Bastion Host only"
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -85,6 +93,14 @@ resource "aws_security_group" "ec2_erp" {
     protocol        = "tcp"
     security_groups = [aws_security_group.ec2_web[0].id]
     description     = "ERP HTTPS from Web"
+  }
+
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion[0].id]
+    description     = "SSH from Bastion Host only"
   }
 
   egress {
@@ -161,6 +177,33 @@ resource "aws_security_group" "ds" {
   }
 
   tags = { Name = "sg-ds-${var.env}" }
+}
+
+# ── Bastion Host Security Group (Production) ─────────────────────
+# Bastion nằm ở Public Subnet, chỉ nhận SSH từ VPN CIDR
+# EC2 private (Web/ERP) chỉ nhận SSH từ Bastion SG → không expose port 22 ra ngoài
+resource "aws_security_group" "bastion" {
+  count       = var.env == "prod" ? 1 : 0
+  name        = "sg-bastion-${var.env}"
+  description = "Bastion Host: SSH from Client VPN only"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.vpn_cidr]
+    description = "SSH from Client VPN"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { Name = "sg-bastion-${var.env}" }
 }
 
 # ── R&D EC2 Security Group ────────────────────────────────────────
