@@ -19,7 +19,6 @@ resource "aws_ec2_client_vpn_endpoint" "this" {
   }
 
   # Layer 2: Active Directory — user phải xác thực username/password với Directory Service
-  # Kết hợp cả 2 layer: certificate + AD credentials (MFA theo kiến trúc)
   authentication_options {
     type                = "directory-service-authentication"
     active_directory_id = var.directory_id
@@ -49,9 +48,8 @@ resource "aws_cloudwatch_log_stream" "vpn" {
 }
 
 # ── Associate VPN to 2 private subnets (HA across AZ-1a và AZ-1b) ─
-# Mỗi association = 1 ENI được tạo trong subnet đó
-# Remote Staff kết nối và được assign IP từ client_cidr, traffic được
-# route đến TGW từ private subnet route table.
+# Khi associate, AWS tự động tạo "Default Route" (Origin: associate)
+# cho CIDR của subnet VPC (10.0.0.0/16) — không cần khai báo thêm route đó.
 resource "aws_ec2_client_vpn_network_association" "prod_1a" {
   client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
   subnet_id              = var.target_subnet_id
@@ -78,26 +76,12 @@ resource "aws_ec2_client_vpn_authorization_rule" "rnd" {
 }
 
 # ── Routes ───────────────────────────────────────────────────────
-# Route Prod VPC: đi qua subnet association AZ-1a
-resource "aws_ec2_client_vpn_route" "prod_1a" {
-  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
-  destination_cidr_block = "10.0.0.0/16"
-  target_vpc_subnet_id   = var.target_subnet_id
-  description            = "Route to Production VPC via AZ-1a"
+# KHÔNG khai báo route 10.0.0.0/16 ở đây.
+# AWS tự động tạo "Default Route" (Origin: associate) cho mỗi subnet
+# khi network_association được tạo — không thể tạo thêm hay xóa thủ công.
 
-  depends_on = [aws_ec2_client_vpn_network_association.prod_1a]
-}
-
-resource "aws_ec2_client_vpn_route" "prod_1b" {
-  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
-  destination_cidr_block = "10.0.0.0/16"
-  target_vpc_subnet_id   = var.target_subnet_1b_id
-  description            = "Route to Production VPC via AZ-1b"
-
-  depends_on = [aws_ec2_client_vpn_network_association.prod_1b]
-}
-
-# Route R&D VPC: đi qua private subnet có route đến TGW
+# Route R&D VPC: cần khai báo vì đây là external route qua TGW,
+# AWS không tự tạo route này.
 resource "aws_ec2_client_vpn_route" "rnd_1a" {
   client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this.id
   destination_cidr_block = "10.1.0.0/16"

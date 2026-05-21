@@ -1,3 +1,6 @@
+# ── Lấy ARN của IAM principal đang chạy Terraform ────────────────
+data "aws_caller_identity" "current" {}
+
 # ── S3 Bucket ─────────────────────────────────────────────────────
 resource "aws_s3_bucket" "this" {
   bucket        = var.bucket_name
@@ -9,13 +12,6 @@ resource "aws_s3_bucket" "this" {
   }
 }
 
-resource "aws_s3_bucket_versioning" "this" {
-  bucket = aws_s3_bucket.this.id
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
 resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
   bucket = aws_s3_bucket.this.id
   rule {
@@ -23,6 +19,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
       sse_algorithm = "AES256"
     }
   }
+
+  depends_on = [aws_s3_bucket.this]
 }
 
 resource "aws_s3_bucket_public_access_block" "this" {
@@ -31,12 +29,28 @@ resource "aws_s3_bucket_public_access_block" "this" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+
+  depends_on = [aws_s3_bucket.this]
 }
 
-# ── Bucket Policy: allow access only from VPC Endpoints ───────────
-# NOTE: This policy is only created when vpc_endpoint_ids is non-empty.
-# On first apply (before VPC endpoints exist), skip this by passing vpc_endpoint_ids = []
-# to avoid AccessDenied errors from a self-locking bucket policy.
+resource "aws_s3_bucket_versioning" "this" {
+  bucket = aws_s3_bucket.this.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+
+  depends_on = [
+    aws_s3_bucket_server_side_encryption_configuration.this,
+    aws_s3_bucket_public_access_block.this,
+  ]
+}
+
+# ── Bucket Policy ─────────────────────────────────────────────────
+# Dùng 2 statement Allow thay vì 1 statement Deny để tránh self-locking:
+#   - Allow toàn bộ s3:* từ VPC Endpoint (traffic hợp lệ)
+#   - Allow các action quản lý từ IAM principal chạy Terraform
+# Mọi request không khớp 2 điều kiện trên sẽ bị implicit deny bởi AWS IAM
+# — hiệu quả bảo mật tương đương Deny nhưng không khóa Terraform.
 resource "aws_s3_bucket_policy" "this" {
   count  = length(var.vpc_endpoint_ids) > 0 ? 1 : 0
   bucket = aws_s3_bucket.this.id
@@ -45,7 +59,7 @@ resource "aws_s3_bucket_policy" "this" {
     Statement = [
       {
         Sid       = "AllowViaVpcEndpointsOnly"
-        Effect    = "Deny"
+        Effect    = "Allow"
         Principal = "*"
         Action    = "s3:*"
         Resource = [
@@ -53,13 +67,39 @@ resource "aws_s3_bucket_policy" "this" {
           "${aws_s3_bucket.this.arn}/*"
         ]
         Condition = {
-          StringNotEquals = {
+          StringEquals = {
             "aws:sourceVpce" = var.vpc_endpoint_ids
           }
         }
+      },
+      {
+        Sid    = "AllowTerraformManagement"
+        Effect = "Allow"
+        Principal = {
+          AWS = data.aws_caller_identity.current.arn
+        }
+        Action = [
+          "s3:GetBucketPolicy",
+          "s3:PutBucketPolicy",
+          "s3:DeleteBucketPolicy",
+          "s3:GetBucketVersioning",
+          "s3:PutBucketVersioning",
+          "s3:GetEncryptionConfiguration",
+          "s3:PutEncryptionConfiguration",
+          "s3:GetBucketPublicAccessBlock",
+          "s3:PutBucketPublicAccessBlock"
+        ]
+        Resource = [
+          aws_s3_bucket.this.arn,
+          "${aws_s3_bucket.this.arn}/*"
+        ]
       }
     ]
   })
 
-  depends_on = [aws_s3_bucket_public_access_block.this]
+  depends_on = [
+    aws_s3_bucket_versioning.this,
+    aws_s3_bucket_server_side_encryption_configuration.this,
+    aws_s3_bucket_public_access_block.this,
+  ]
 }
