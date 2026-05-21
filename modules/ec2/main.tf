@@ -79,7 +79,7 @@ resource "aws_instance" "bastion_1b" {
 resource "aws_launch_template" "web" {
   count         = var.env == "prod" ? 1 : 0
   name_prefix   = "lt-prod-web-portal-"
-  image_id      = var.ami
+  image_id      = var.web_portal_ami_id != "" ? var.web_portal_ami_id : var.ami
   instance_type = var.instance_type
 
   network_interfaces {
@@ -97,91 +97,85 @@ resource "aws_launch_template" "web" {
 
   key_name = var.key_name != "" ? var.key_name : null
 
-  # User data: Cài Nginx Web Portal với health check endpoint cho ALB
-  user_data = base64encode(<<-USERDATA
-    #!/bin/bash
-    # ══════════════════════════════════════════════════════════════════
-    # Nginx Web Server - Production Environment
-    # Vị trí: Private subnet, EC2 AZ-1a/1b (Auto Scaling Group)
-    # Purpose: Web Portal - Load balanced via ALB (port 80)
-    # Health Check: GET /health (ALB requires 200 OK)
-    # Networking: Outbound via NAT Gateway, Inbound từ ALB
-    # ══════════════════════════════════════════════════════════════════
-    set -euo pipefail
-    
-    # 1. Cập nhật hệ thống
-    yum update -y
-    
-    # 2. Cài Nginx
-    yum install -y nginx
-    
-    # 3. Tạo trang index.html cho Web Portal
-    mkdir -p /var/www/html
-    cat > /var/www/html/index.html <<'EOF'
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Web Portal - AWS Production</title>
-      <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-        .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        h1 { color: #FF9900; }
-        .info { background: #f0f0f0; padding: 15px; border-left: 4px solid #FF9900; margin: 10px 0; }
-        .label { font-weight: bold; color: #333; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>🚀 Nginx Web Server - Production Environment</h1>
-        <div class="info">
-          <p class="label">Environment:</p> Amazon Linux 2 - EC2 Portal AZ-1a/1b
-        </div>
-        <div class="info">
-          <p class="label">Service:</p> Web Portal (Load Balanced via AWS Application Load Balancer)
-        </div>
-        <div class="info">
-          <p class="label">Status:</p> ✅ Active and Running
-        </div>
-        <div class="info">
-          <p class="label">Network:</p> Private Subnet → NAT Gateway → Internet
-        </div>
-        <div class="info">
-          <p class="label">Health Check:</p> Endpoint: /health (Port 80)
-        </div>
-        <hr style="margin-top: 30px; border: none; border-top: 1px solid #ddd;">
-        <p style="color: #666; font-size: 12px;">Deployed by Terraform | AWS Infrastructure as Code</p>
-      </div>
-    </body>
-    </html>
-    EOF
-    
-    # 4. Cấu hình Nginx - Health Check endpoint + Web Portal
-    cat > /etc/nginx/conf.d/web-portal.conf <<'EOF'
-    server {
-      listen 80 default_server;
-      server_name _;
-      root /var/www/html;
-      
-      # ─── ALB Health Check ───────────────────────────────────────
-      location /health {
-        access_log off;
-        return 200 "OK - Web Portal healthy\n";
-        add_header Content-Type text/plain;
-      }
-      
-      # ─── Web Portal Application ──────────────────────────────────
-      location / {
-        index index.html;
-        try_files $uri $uri/ =404;
-      }
-    }
-    EOF
-    
-    # 5. Khởi động Nginx
-    nginx -t && systemctl start nginx && systemctl enable nginx
-    
-    echo "[OK] Nginx Web Portal started - Ready for ALB health check"
-  USERDATA
+  # User data: Start Nginx service (if using custom AMI, Nginx already installed)
+  #            If using base image, this provides fallback initialization
+  user_data = base64encode(var.web_portal_ami_id != "" ? 
+    # Custom AMI path: Nginx already installed, just ensure service is running
+    <<-USERDATA
+#!/bin/bash
+set -euo pipefail
+echo "[$(date)] Starting Nginx service..."
+systemctl start nginx
+systemctl enable nginx
+echo "[$(date)] ✓ Nginx service started"
+    USERDATA
+    :
+    # Base image fallback: Install Nginx if needed
+    <<-USERDATA
+#!/bin/bash
+set -euo pipefail
+echo "[$(date)] Updating system..."
+yum update -y
+
+echo "[$(date)] Installing Nginx..."
+yum install -y nginx
+
+echo "[$(date)] Creating web content..."
+mkdir -p /var/www/html
+cat > /var/www/html/index.html <<'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Web Portal - AWS Production</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+    .container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h1 { color: #FF9900; }
+    .info { background: #f0f0f0; padding: 15px; border-left: 4px solid #FF9900; margin: 10px 0; }
+    .label { font-weight: bold; color: #333; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 Nginx Web Server - Production</h1>
+    <div class="info">
+      <p class="label">Status:</p> ✅ Active and Running
+    </div>
+    <div class="info">
+      <p class="label">Environment:</p> Amazon Linux 2 - EC2 Portal
+    </div>
+    <div class="info">
+      <p class="label">Health Check:</p> GET /health (Port 80)
+    </div>
+  </div>
+</body>
+</html>
+EOF
+
+echo "[$(date)] Configuring Nginx..."
+cat > /etc/nginx/conf.d/web-portal.conf <<'EOF'
+server {
+  listen 80 default_server;
+  server_name _;
+  root /var/www/html;
+  
+  location /health {
+    access_log off;
+    return 200 "OK\n";
+    add_header Content-Type text/plain;
+  }
+  
+  location / {
+    index index.html;
+    try_files $uri $uri/ =404;
+  }
+}
+EOF
+
+echo "[$(date)] Starting Nginx..."
+nginx -t && systemctl start nginx && systemctl enable nginx
+echo "[$(date)] ✓ Nginx started successfully"
+    USERDATA
   )
 
   tag_specifications {
@@ -203,7 +197,8 @@ resource "aws_autoscaling_group" "web" {
   # ALB chỉ gắn với Web Portal
   target_group_arns        = [var.alb_web_tg_arn]
   health_check_type        = "ELB"
-  health_check_grace_period = 300
+  # Grace period: 180s for custom AMI (Nginx already running), 600s for base image with user_data
+  health_check_grace_period = var.web_portal_ami_id != "" ? 180 : 600
 
   launch_template {
     id      = aws_launch_template.web[0].id
