@@ -202,13 +202,13 @@ resource "aws_route_table" "db" {
 }
 
 resource "aws_route_table_association" "db_1a" {
-  count          = length(aws_subnet.db_1a)
+  count          = (var.db_subnet_1a_cidr != null && var.db_subnet_1b_cidr != null) ? 1 : 0
   subnet_id      = aws_subnet.db_1a[0].id
   route_table_id = aws_route_table.db[0].id
 }
 
 resource "aws_route_table_association" "db_1b" {
-  count          = length(aws_subnet.db_1b)
+  count          = (var.db_subnet_1a_cidr != null && var.db_subnet_1b_cidr != null) ? 1 : 0
   subnet_id      = aws_subnet.db_1b[0].id
   route_table_id = aws_route_table.db[0].id
 }

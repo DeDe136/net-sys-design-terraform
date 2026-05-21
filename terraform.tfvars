@@ -62,7 +62,7 @@ vpn_client_cidr = "172.16.0.0/22"
 
 # ── S3 ────────────────────────────────────────────────────────────
 # Phải globally unique — thay <account_id> bằng AWS account ID thực tế
-s3_bucket_name = "s3-prod-shared-<account_id>"
+s3_bucket_name = "s3-prod-shared-864304568243-v2"
 
 # ── TGW Dedicated Subnets (/28) ───────────────────────────────────
 # FIX 2: Tách riêng khỏi EC2 private subnets theo AWS best practice.

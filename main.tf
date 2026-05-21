@@ -59,10 +59,13 @@ module "rnd_vpc" {
 # ─────────────────────────────────────────────────────────────────
 module "transit_gateway" {
   source      = "./modules/transit_gateway"
-  create_tgw  = true   # Chỉ tạo TGW resource, KHÔNG tạo attachments
+  create_tgw  = true   # Only create TGW resource, NOT attachments
   prod_vpc_id = module.prod_vpc.vpc_id
   rnd_vpc_id  = module.rnd_vpc.vpc_id
-  # Để trống — attachments tạo ở Phase 4 sau khi subnets sẵn sàng
+
+  # Attachments are created in Phase 4 (module tgw_attachments) after subnets are ready
+  create_prod_attachment  = false
+  create_rnd_attachment   = false
   prod_private_subnet_ids = []
   rnd_private_subnet_ids  = []
 }
@@ -147,12 +150,17 @@ module "rnd_subnets" {
 # ─────────────────────────────────────────────────────────────────
 module "tgw_attachments" {
   source          = "./modules/transit_gateway"
-  create_tgw      = false                          # KHÔNG tạo TGW mới
-  existing_tgw_id = module.transit_gateway.tgw_id  # Dùng TGW đã tạo ở Phase 2
+  create_tgw      = false                          # Do not create a new TGW
+  existing_tgw_id = module.transit_gateway.tgw_id  # Use TGW created in Phase 2
   prod_vpc_id     = module.prod_vpc.vpc_id
   rnd_vpc_id      = module.rnd_vpc.vpc_id
 
-  # FIX 2: Dùng dedicated TGW subnets thay vì private_subnet_1a/1b
+  # FIX: Use explicit booleans instead of length(subnet_ids) > 0
+  # to avoid "Invalid count argument" errors during plan phase.
+  create_prod_attachment = true
+  create_rnd_attachment  = true
+
+  # Dedicated TGW subnets (/28) for attachments
   prod_private_subnet_ids = compact([
     module.prod_subnets.tgw_subnet_1a_id,
     module.prod_subnets.tgw_subnet_1b_id,
@@ -208,7 +216,7 @@ module "prod_ec2" {
   source        = "./modules/ec2"
   env           = "prod"
   ami           = var.ec2_ami
-  instance_type = var.ec2_instance_type
+  instance_type = "t3.micro"  # Reduced to stay within 16 vCPU free tier limit. Change to var.ec2_instance_type for production.
 
   iam_instance_profile = var.ec2_instance_profile_name
 
@@ -234,12 +242,15 @@ module "prod_ec2" {
   # ERP/CRM nhận traffic nội bộ từ Web Portal, không gắn ALB
   alb_web_tg_arn = module.prod_alb.web_tg_arn
 
-  asg_web_min     = var.asg_web_min
-  asg_web_max     = var.asg_web_max
-  asg_web_desired = var.asg_web_desired
-  asg_erp_min     = var.asg_erp_min
-  asg_erp_max     = var.asg_erp_max
-  asg_erp_desired = var.asg_erp_desired
+  # Reduced ASG sizes to fit within 16 vCPU free tier limit.
+  # vCPU budget: bastion×2(1) + web×1(1) + erp×1(1) + rnd×2(1) = 6 vCPU total.
+  # Restore var.asg_* when account vCPU limit is increased.
+  asg_web_min     = 1
+  asg_web_max     = 2
+  asg_web_desired = 1
+  asg_erp_min     = 1
+  asg_erp_max     = 2
+  asg_erp_desired = 1
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -249,14 +260,14 @@ module "rnd_ec2" {
   source        = "./modules/ec2"
   env           = "rnd"
   ami           = var.ec2_ami
-  instance_type = var.ec2_instance_type
+  instance_type = "t3.micro"  # Reduced to stay within 16 vCPU free tier limit.
 
   iam_instance_profile = var.ec2_instance_profile_name
 
   rnd_subnet_2a_id          = module.rnd_subnets.private_subnet_1a_id
   rnd_subnet_2b_id          = module.rnd_subnets.private_subnet_1b_id
   sg_rnd_id                 = module.rnd_security_groups.sg_rnd_ec2_id
-  rnd_instance_count_per_az = var.rnd_instance_count_per_az
+  rnd_instance_count_per_az = 1  # 1 per AZ × 2 AZ = 2 vCPU. Increase when vCPU limit raised.
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -272,7 +283,7 @@ module "prod_rds" {
   sg_rds_id      = module.prod_security_groups.sg_rds_id
   engine         = var.rds_engine
   engine_version = var.rds_engine_version
-  instance_class = var.rds_instance_class
+  instance_class = "db.t3.micro"  # Free Tier eligible. Restore to var.rds_instance_class for production.
   db_name        = var.rds_db_name
   username       = var.rds_username
   password       = var.rds_password
@@ -366,20 +377,20 @@ module "s3" {
 #   Layer 2 — Active Directory:         user phải đăng nhập username/password
 #                                        qua AWS Managed Microsoft AD
 # ─────────────────────────────────────────────────────────────────
-# module "client_vpn" {
-#   source              = "./modules/vpn"
-#   client_cidr         = var.vpn_client_cidr
-#   target_subnet_id    = module.prod_subnets.private_subnet_1a_id
-#   target_subnet_1b_id = module.prod_subnets.private_subnet_1b_id
-#   vpc_id              = module.prod_vpc.vpc_id
-#   name                = "client-vpn-prod"
-#
-#   server_certificate_arn = var.vpn_server_certificate_arn
-#   client_certificate_arn = var.vpn_client_certificate_arn
-#
-#   # Truyền Directory ID để VPN xác thực user qua Active Directory
-#   # Directory Service phải được tạo xong trước khi tạo VPN endpoint
-#   directory_id = module.prod_directory_service.directory_id
-#
-#   depends_on = [module.prod_directory_service]
-# }
+module "client_vpn" {
+  source              = "./modules/vpn"
+  client_cidr         = var.vpn_client_cidr
+  target_subnet_id    = module.prod_subnets.private_subnet_1a_id
+  target_subnet_1b_id = module.prod_subnets.private_subnet_1b_id
+  vpc_id              = module.prod_vpc.vpc_id
+  name                = "client-vpn-prod"
+
+  server_certificate_arn = var.vpn_server_certificate_arn
+  client_certificate_arn = var.vpn_client_certificate_arn
+
+  # Truyền Directory ID để VPN xác thực user qua Active Directory
+  # Directory Service phải được tạo xong trước khi tạo VPN endpoint
+  directory_id = module.prod_directory_service.directory_id
+
+  depends_on = [module.prod_directory_service]
+}

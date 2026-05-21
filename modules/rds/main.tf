@@ -13,8 +13,8 @@ resource "aws_db_instance" "primary" {
   engine_version         = var.engine_version
   instance_class         = var.instance_class
   allocated_storage      = 20
-  max_allocated_storage  = 100
-  storage_type           = "gp3"
+  max_allocated_storage  = 20   # Keep equal to allocated_storage on Free Tier to avoid autoscaling charges.
+  storage_type           = "gp2"  # gp2 is Free Tier eligible; gp3 is not.
   storage_encrypted      = true
 
   db_name  = var.db_name
@@ -24,11 +24,13 @@ resource "aws_db_instance" "primary" {
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [var.sg_rds_id]
 
-  multi_az               = true   # Primary + Standby auto-managed by AWS
+  # NOTE: Free Tier restrictions applied below.
+  # For production: set multi_az=true, backup_retention_period=7, instance_class=db.t3.medium
+  multi_az               = false  # Free Tier does not support Multi-AZ
   publicly_accessible    = false
   deletion_protection    = false
   skip_final_snapshot    = true
-  backup_retention_period = 7
+  backup_retention_period = 0     # Free Tier requires 0. Set to 7 for production.
   backup_window           = "03:00-04:00"
   maintenance_window      = "Mon:04:00-Mon:05:00"
 

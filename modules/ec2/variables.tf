@@ -5,8 +5,8 @@ variable "instance_type" { type = string }
 # Bastion Host variables (Production only)
 variable "bastion_instance_type" {
   type        = string
-  default     = "t3.micro"
-  description = "Instance type cho Bastion Host — không cần mạnh, chỉ là jump host"
+  default     = "t2.micro"
+  description = "Instance type for Bastion Host — jump host only, no compute needed. t2.micro = Free Tier eligible."
 }
 variable "bastion_subnet_1a_id" {
   type        = string
@@ -66,11 +66,11 @@ variable "asg_web_min" {
 }
 variable "asg_web_max" {
   type    = number
-  default = 4
+  default = 2
 }
 variable "asg_web_desired" {
   type    = number
-  default = 2
+  default = 1
 }
 variable "asg_erp_min" {
   type    = number
@@ -78,11 +78,11 @@ variable "asg_erp_min" {
 }
 variable "asg_erp_max" {
   type    = number
-  default = 4
+  default = 2
 }
 variable "asg_erp_desired" {
   type    = number
-  default = 2
+  default = 1
 }
 
 # R&D variables (not used in prod)
@@ -100,5 +100,6 @@ variable "sg_rnd_id" {
 }
 variable "rnd_instance_count_per_az" {
   type    = number
-  default = 4
+  default = 1
+  description = "Number of R&D EC2 instances per AZ. Keep at 1 for dev/lab to stay within vCPU limits."
 }

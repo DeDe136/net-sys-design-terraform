@@ -34,16 +34,20 @@ resource "aws_s3_bucket_public_access_block" "this" {
 }
 
 # ── Bucket Policy: allow access only from VPC Endpoints ───────────
+# NOTE: This policy is only created when vpc_endpoint_ids is non-empty.
+# On first apply (before VPC endpoints exist), skip this by passing vpc_endpoint_ids = []
+# to avoid AccessDenied errors from a self-locking bucket policy.
 resource "aws_s3_bucket_policy" "this" {
+  count  = length(var.vpc_endpoint_ids) > 0 ? 1 : 0
   bucket = aws_s3_bucket.this.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AllowViaVpcEndpointsOnly"
-        Effect = "Deny"
+        Sid       = "AllowViaVpcEndpointsOnly"
+        Effect    = "Deny"
         Principal = "*"
-        Action = "s3:*"
+        Action    = "s3:*"
         Resource = [
           aws_s3_bucket.this.arn,
           "${aws_s3_bucket.this.arn}/*"

@@ -38,6 +38,7 @@ ALB (Internet-facing, public subnets AZ-1a + AZ-1b)
 │  ┌──────────────────┐  ┌──────────────────┐         │
 │  │ Public Subnet    │  │ Public Subnet    │         │
 │  │ NAT GW + ALB     │  │ NAT GW + ALB     │         │
+│  │ Bastion Host     │  │ Bastion Host     │         │
 │  └────────┬─────────┘  └────────┬─────────┘         │
 │           │ (NAT outbound)      │                   │
 │  ┌────────▼─────────┐  ┌────────▼─────────┐         │
@@ -87,12 +88,13 @@ ALB (Internet-facing, public subnets AZ-1a + AZ-1b)
 | EC2 Web Portal | Production | ASG multi-AZ, nhận traffic từ ALB |
 | EC2 ERP/CRM | Production | ASG multi-AZ, nhận traffic **nội bộ** từ Web Portal |
 | RDS MySQL 8.0 | Production | Multi-AZ (Primary AZ-1a + Standby AZ-1b) |
-| Directory Service | Production | AWS Managed Microsoft AD, xác thực người dùng |
+| Directory Service | Production | AWS Managed Microsoft AD, xác thực VPN users và người dùng nội bộ |
+| Bastion Host | Production | 1 instance/AZ (AZ-1a + AZ-1b), nằm ở Public Subnet, là jump host SSH duy nhất vào EC2 private — chỉ cho phép SSH từ Client VPN CIDR |
 | EC2 R&D | R&D | 4 instance/AZ, không gắn ALB, cập nhật qua NAT |
 | EFS | R&D | Shared storage mount vào tất cả EC2 R&D |
 | S3 | Shared | Truy cập từ cả 2 VPC qua Gateway Endpoint |
 | Transit Gateway | Shared | Kết nối Production ↔ R&D ↔ Client VPN |
-| Client VPN | Production | Remote Staff kết nối qua OpenVPN |
+| Client VPN | Production | Remote Staff kết nối qua OpenVPN, xác thực 2 lớp: certificate + Active Directory |
 
 ---
 
@@ -128,10 +130,12 @@ terraform-project/
 │   │
 │   ├── security_groups/            # Tất cả Security Groups theo env
 │   │   ├── main.tf                 #   prod: sg-alb, sg-ec2-web, sg-ec2-erp,
-│   │   │                           #         sg-rds, sg-ds
+│   │   │                           #         sg-rds, sg-ds, sg-bastion
 │   │   │                           #   rnd:  sg-rnd-ec2, sg-efs
-│   │   ├── variables.tf            #   vpc_id, env, vpn_cidr, rnd_vpc_cidr
-│   │   └── outputs.tf              #   sg IDs cho từng resource
+│   │   │                           #   sg-bastion: SSH chỉ từ vpn_cidr, ICMP nội bộ
+│   │   │                           #   sg-ec2-web/erp: SSH chỉ từ sg-bastion, ICMP nội bộ
+│   │   ├── variables.tf            #   vpc_id, env, vpn_cidr, rnd_vpc_cidr, prod_vpc_cidr
+│   │   └── outputs.tf              #   sg IDs cho từng resource (bao gồm sg_bastion_id)
 │   │
 │   ├── alb/                        # Application Load Balancer (Production only)
 │   │   ├── main.tf                 #   aws_lb + Target Group Web Portal + Listener
@@ -140,14 +144,17 @@ terraform-project/
 │   │   └── outputs.tf              #   alb_arn, alb_dns_name, web_tg_arn
 │   │
 │   ├── ec2/                        # EC2 instances (Production ASG + R&D fixed)
-│   │   ├── main.tf                 #   prod: Launch Template + ASG cho web-portal
+│   │   ├── main.tf                 #   prod: Bastion Host — aws_instance × 2
+│   │   │                           #         (1 instance/AZ, Public Subnet, jump host SSH)
+│   │   │                           #         Launch Template + ASG cho web-portal
 │   │   │                           #         Launch Template + ASG cho erp-crm
 │   │   │                           #         (erp-crm KHÔNG gắn ALB target group)
 │   │   │                           #   rnd:  aws_instance × N/AZ, user_data
 │   │   │                           #         cập nhật gói qua NAT Gateway
-│   │   ├── variables.tf            #   env, ami, instance_type, subnet IDs,
-│   │   │                           #   sg IDs, alb_web_tg_arn, ASG min/max/desired
-│   │   └── outputs.tf              #   ASG names, instance IDs
+│   │   ├── variables.tf            #   env, ami, instance_type, bastion_instance_type,
+│   │   │                           #   bastion_subnet_1a/1b_id, sg_bastion_id,
+│   │   │                           #   subnet IDs, sg IDs, alb_web_tg_arn, ASG min/max/desired
+│   │   └── outputs.tf              #   bastion_private_ip_1a/1b, ASG names, instance IDs
 │   │
 │   ├── rds/                        # RDS MySQL Multi-AZ
 │   │   ├── main.tf                 #   aws_db_subnet_group + aws_db_instance
@@ -188,7 +195,8 @@ terraform-project/
 │       ├── main.tf                 #   aws_ec2_client_vpn_endpoint
 │       │                           #   aws_ec2_client_vpn_network_association
 │       │                           #   aws_ec2_client_vpn_authorization_rule
-│       ├── variables.tf            #   client_cidr, server/client cert ARNs
+│       ├── variables.tf            #   client_cidr, server/client cert ARNs,
+│       │                           #   directory_id (AD authentication)
 │       └── outputs.tf              #   vpn_endpoint_id, vpn_endpoint_dns
 │
 ├── environments/                   # Giá trị biến theo môi trường
@@ -254,14 +262,22 @@ Mọi EC2 (kể cả R&D) cập nhật packages `yum update`, download dependenc
 ```
 Remote Staff
     │ OpenVPN (172.16.0.0/22)
+    │ Xác thực lớp 1: Certificate (PKI từ easy-rsa / ACM)
+    │ Xác thực lớp 2: Active Directory credentials (AWS Managed Microsoft AD)
     ▼
 Client VPN Endpoint (Production VPC)
     │
     ▼
 Transit Gateway
     ├──► Production VPC (10.0.0.0/16)
+    │        └── SSH (port 22) ──► Bastion Host (Public Subnet AZ-1a / AZ-1b)
+    │                                   └── SSH jump ──► EC2 Web Portal / ERP/CRM
+    │                                                     (Private Subnet)
     └──► R&D VPC (10.1.0.0/16)
+             └── SSH (port 22) ──► EC2 R&D (Private Subnet)
 ```
+
+> Remote Staff không SSH trực tiếp vào EC2 private. Luồng bắt buộc: **VPN → Bastion → EC2**. Security Group của EC2 Web Portal và ERP/CRM chỉ nhận SSH từ `sg-bastion`, không mở port 22 ra VPN CIDR trực tiếp.
 
 ### S3 Access (không qua Internet)
 ```
@@ -740,9 +756,12 @@ Phase 4:  prod_security_groups + rnd_security_groups
           ├──► prod_alb
           │        └──► prod_ec2 (web ASG gắn ALB target group)
           │                      (erp ASG không gắn ALB)
+          │                      (bastion × 2 — Public Subnet AZ-1a/1b)
           │
           ├──► prod_rds
           ├──► prod_directory_service
+          │        └──► client_vpn   ← depends_on prod_directory_service
+          │             (directory_id dùng để xác thực VPN user qua Active Directory)
           │
           ├──► rnd_ec2 (fixed instances, cập nhật qua NAT)
           ├──► rnd_efs
@@ -750,7 +769,6 @@ Phase 4:  prod_security_groups + rnd_security_groups
           ├──► prod_s3_endpoint + rnd_s3_endpoint
           │        └──► s3 (bucket policy sau khi có endpoint IDs)
           │
-          └──► client_vpn
 ```
 
 > **Lưu ý:** Transit Gateway được tạo 2 lần trong `main.tf` (`module "transit_gateway"` và `module "tgw_attachments"`) vì attachment cần subnet IDs chỉ có sau Phase 2. Đây là pattern phổ biến để tránh circular dependency.
@@ -774,12 +792,15 @@ terraform output
 | `tgw_id` | Transit Gateway ID | Debug routing |
 | `client_vpn_dns` | VPN endpoint DNS | Tạo file .ovpn |
 | `s3_bucket_name` | Tên S3 bucket | Upload/download artifacts |
+| `bastion_private_ip` | Private IP của Bastion Host (AZ-1a/1b) | SSH vào EC2 private sau khi kết nối VPN |
 
 Lấy output cụ thể:
 
 ```bash
 terraform output prod_alb_dns
 terraform output -raw rds_endpoint
+terraform output bastion_private_ip_1a
+terraform output bastion_private_ip_1b
 ```
 
 ---
@@ -792,6 +813,7 @@ Chi phí tháng tại `us-east-1` với cấu hình mặc định (`terraform.tf
 |---|---|---|
 | EC2 t3.micro — Web Portal ASG (desired 2) | 2 | ~$15 |
 | EC2 t3.micro — ERP/CRM ASG (desired 2) | 2 | ~$15 |
+| EC2 t3.micro — Bastion Host (1/AZ × 2 AZ) | 2 | ~$15 |
 | EC2 t3.micro — R&D Testing | 8 | ~$60 |
 | NAT Gateway (4 AZ) | 4 | ~$130 |
 | RDS db.t3.medium Multi-AZ | 1 | ~$100 |
@@ -801,7 +823,7 @@ Chi phí tháng tại `us-east-1` với cấu hình mặc định (`terraform.tf
 | EFS (phụ thuộc storage) | — | ~$0.30/GB |
 | Transit Gateway | 1 | ~$36 + data |
 | S3, CloudWatch Logs | — | < $5 |
-| **Tổng ước tính** | | **~$600–650/tháng** |
+| **Tổng ước tính** | | **~$615–665/tháng** |
 
 > ⚠️ Con số trên chỉ mang tính tham khảo. Chi phí thực tế phụ thuộc vào data transfer, storage usage và thời gian instance chạy. Dùng [AWS Pricing Calculator](https://calculator.aws) để tính chính xác.
 
@@ -865,6 +887,22 @@ cp secret.tfvars.example secret.tfvars
 terraform force-unlock <lock-id>
 # Lock ID có trong thông báo lỗi
 ```
+
+### Không ping được giữa các EC2 (ICMP timeout)
+Security Group của EC2 Web Portal, ERP/CRM và Bastion Host đã bật ICMP rule cho `prod_vpc_cidr` và `rnd_vpc_cidr`. Nếu vẫn không ping được, kiểm tra:
+
+1. **Route table** — đảm bảo private subnet có route `10.1.0.0/16 → tgw-<id>` (TGW route được tạo ở Giai đoạn 2):
+   ```bash
+   terraform output tgw_id
+   # Kiểm tra trong AWS Console: VPC → Route Tables → chọn rt-prod-private-1a
+   ```
+
+2. **Security Group nguồn** — ICMP rule chỉ cho phép từ VPC CIDR, không phải từ VPN CIDR (`172.16.0.0/22`). Ping từ máy remote staff qua VPN sẽ bị chặn; ping giữa các EC2 trong cùng/khác VPC mới được cho phép.
+
+3. **`enable_tgw_routes`** — nếu cross-VPC ping fail, xác nhận đã apply Giai đoạn 2 (`enable_tgw_routes = true`):
+   ```bash
+   terraform state show module.prod_subnets
+   ```
 
 ---
 

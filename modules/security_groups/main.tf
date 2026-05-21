@@ -1,7 +1,7 @@
 # ── ALB Security Group ────────────────────────────────────────────
 resource "aws_security_group" "alb" {
   count       = var.env == "prod" ? 1 : 0
-  name        = "sg-alb-${var.env}"
+  name        = "sec-alb-${var.env}"
   description = "ALB: HTTP/HTTPS from Internet"
   vpc_id      = var.vpc_id
 
@@ -28,13 +28,13 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "sg-alb-${var.env}" }
+  tags = { Name = "sec-alb-${var.env}" }
 }
 
 # ── EC2 Web Portal Security Group ─────────────────────────────────
 resource "aws_security_group" "ec2_web" {
   count       = var.env == "prod" ? 1 : 0
-  name        = "sg-ec2-web-${var.env}"
+  name        = "sec-ec2-web-${var.env}"
   description = "EC2 Web Portal: traffic from ALB only"
   vpc_id      = var.vpc_id
 
@@ -67,7 +67,7 @@ resource "aws_security_group" "ec2_web" {
     to_port     = -1
     protocol    = "icmp"
     cidr_blocks = [var.prod_vpc_cidr, var.rnd_vpc_cidr]
-    description = "ICMP từ Production VPC và R&D VPC — cho phép ping nội bộ cross-VPC"
+    description = "ICMP from Production VPC and R&D VPC - allow cross-VPC ping"
   }
 
   egress {
@@ -77,13 +77,13 @@ resource "aws_security_group" "ec2_web" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "sg-ec2-web-${var.env}" }
+  tags = { Name = "sec-ec2-web-${var.env}" }
 }
 
 # ── EC2 ERP/CRM Security Group ────────────────────────────────────
 resource "aws_security_group" "ec2_erp" {
   count       = var.env == "prod" ? 1 : 0
-  name        = "sg-ec2-erp-${var.env}"
+  name        = "sec-ec2-erp-${var.env}"
   description = "EC2 ERP/CRM: traffic from Web Portal"
   vpc_id      = var.vpc_id
 
@@ -116,7 +116,7 @@ resource "aws_security_group" "ec2_erp" {
     to_port     = -1
     protocol    = "icmp"
     cidr_blocks = [var.prod_vpc_cidr, var.rnd_vpc_cidr]
-    description = "ICMP từ Production VPC và R&D VPC — cho phép ping nội bộ cross-VPC"
+    description = "ICMP from Production VPC and R&D VPC - allow cross-VPC ping"
   }
 
   egress {
@@ -126,13 +126,13 @@ resource "aws_security_group" "ec2_erp" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "sg-ec2-erp-${var.env}" }
+  tags = { Name = "sec-ec2-erp-${var.env}" }
 }
 
 # ── RDS Security Group ────────────────────────────────────────────
 resource "aws_security_group" "rds" {
   count       = var.env == "prod" ? 1 : 0
-  name        = "sg-rds-${var.env}"
+  name        = "sec-rds-${var.env}"
   description = "RDS MySQL: from ERP and Web"
   vpc_id      = var.vpc_id
 
@@ -159,13 +159,13 @@ resource "aws_security_group" "rds" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "sg-rds-${var.env}" }
+  tags = { Name = "sec-rds-${var.env}" }
 }
 
 # ── Directory Service Security Group ─────────────────────────────
 resource "aws_security_group" "ds" {
   count       = var.env == "prod" ? 1 : 0
-  name        = "sg-ds-${var.env}"
+  name        = "sec-ds-${var.env}"
   description = "Directory Service: LDAP/LDAPS from Web"
   vpc_id      = var.vpc_id
 
@@ -192,7 +192,7 @@ resource "aws_security_group" "ds" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "sg-ds-${var.env}" }
+  tags = { Name = "sec-ds-${var.env}" }
 }
 
 # ── Bastion Host Security Group (Production) ─────────────────────
@@ -200,7 +200,7 @@ resource "aws_security_group" "ds" {
 # EC2 private (Web/ERP) chỉ nhận SSH từ Bastion SG → không expose port 22 ra ngoài
 resource "aws_security_group" "bastion" {
   count       = var.env == "prod" ? 1 : 0
-  name        = "sg-bastion-${var.env}"
+  name        = "sec-bastion-${var.env}"
   description = "Bastion Host: SSH from Client VPN only"
   vpc_id      = var.vpc_id
 
@@ -217,7 +217,7 @@ resource "aws_security_group" "bastion" {
     to_port     = -1
     protocol    = "icmp"
     cidr_blocks = [var.prod_vpc_cidr, var.rnd_vpc_cidr]
-    description = "ICMP từ Production VPC và R&D VPC — cho phép ping nội bộ cross-VPC"
+    description = "ICMP from Production VPC and R&D VPC - allow cross-VPC ping"
   }
 
   egress {
@@ -227,13 +227,13 @@ resource "aws_security_group" "bastion" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "sg-bastion-${var.env}" }
+  tags = { Name = "sec-bastion-${var.env}" }
 }
 
 # ── R&D EC2 Security Group ────────────────────────────────────────
 resource "aws_security_group" "rnd_ec2" {
   count       = var.env == "rnd" ? 1 : 0
-  name        = "sg-rnd-ec2"
+  name        = "sec-rnd-ec2"
   description = "R&D EC2: SSH from VPN, all internal"
   vpc_id      = var.vpc_id
 
@@ -258,7 +258,7 @@ resource "aws_security_group" "rnd_ec2" {
     to_port     = -1
     protocol    = "icmp"
     cidr_blocks = [var.rnd_vpc_cidr, var.prod_vpc_cidr]
-    description = "ICMP từ R&D VPC và Production VPC — cho phép ping nội bộ cross-VPC"
+    description = "ICMP from R&D VPC and Production VPC - allow cross-VPC ping"
   }
 
   egress {
@@ -268,13 +268,13 @@ resource "aws_security_group" "rnd_ec2" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "sg-rnd-ec2" }
+  tags = { Name = "sec-rnd-ec2" }
 }
 
 # ── EFS Security Group ────────────────────────────────────────────
 resource "aws_security_group" "efs" {
   count       = var.env == "rnd" ? 1 : 0
-  name        = "sg-efs-rnd"
+  name        = "sec-efs-rnd"
   description = "EFS NFS mount from R&D EC2"
   vpc_id      = var.vpc_id
 
@@ -293,5 +293,5 @@ resource "aws_security_group" "efs" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = { Name = "sg-efs-rnd" }
+  tags = { Name = "sec-efs-rnd" }
 }
