@@ -252,7 +252,7 @@ module "prod_ec2" {
   asg_web_desired = var.asg_web_desired
   asg_erp_min     = var.asg_erp_min
   asg_erp_max     = var.asg_erp_max
-  asg_erp_desired = var.asg_erp_desired
+  asg_erp_desired = var.asg_erp_desired  # desired=1
 }
 
 # ─────────────────────────────────────────────────────────────────

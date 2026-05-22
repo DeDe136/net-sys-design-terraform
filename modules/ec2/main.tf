@@ -105,8 +105,8 @@ set -euo pipefail
 echo "[$(date)] Updating system packages..."
 yum update -y
 
-echo "[$(date)] Installing Nginx..."
-yum install -y nginx
+echo "[$(date)] Installing Nginx via amazon-linux-extras..."
+amazon-linux-extras install nginx1 -y
 
 echo "[$(date)] Creating web content directory..."
 mkdir -p /var/www/html

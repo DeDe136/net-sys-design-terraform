@@ -45,7 +45,7 @@ asg_web_desired = 2  # 1 instance mỗi AZ (1a + 1b)
 
 asg_erp_min     = 1
 asg_erp_max     = 2
-asg_erp_desired = 2  # 1 instance mỗi AZ (1a + 1b)
+asg_erp_desired = 1  # 1 instance mỗi AZ (1a + 1b)
 
 rnd_instance_count_per_az = 1  # 1 instance × 2 AZ = 2 EC2 R&D
 
