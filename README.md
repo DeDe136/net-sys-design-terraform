@@ -38,11 +38,11 @@ ALB (Internet-facing, public subnets AZ-1a + AZ-1b)
 │  ┌──────────────────┐  ┌──────────────────┐         │
 │  │ Public Subnet    │  │ Public Subnet    │         │
 │  │ NAT GW + ALB     │  │ NAT GW + ALB     │         │
-│  │ Bastion Host     │  │ Bastion Host     │         │
 │  └────────┬─────────┘  └────────┬─────────┘         │
 │           │ (NAT outbound)      │                   │
 │  ┌────────▼─────────┐  ┌────────▼─────────┐         │
 │  │ Private Subnet   │  │ Private Subnet   │         │
+│  │ Bastion Host     │  │ Bastion Host     │         │
 │  │ EC2 Web Portal ◄─┼ALB│ EC2 Web Portal  │         │
 │  │ EC2 ERP/CRM ◄────┼Web│ EC2 ERP/CRM     │         │
 │  └──────────────────┘  └──────────────────┘         │
@@ -89,7 +89,7 @@ ALB (Internet-facing, public subnets AZ-1a + AZ-1b)
 | EC2 ERP/CRM | Production | ASG multi-AZ, nhận traffic **nội bộ** từ Web Portal |
 | RDS MySQL 8.0 | Production | Multi-AZ (Primary AZ-1a + Standby AZ-1b) |
 | Directory Service | Production | AWS Managed Microsoft AD, xác thực VPN users và người dùng nội bộ |
-| Bastion Host | Production | 1 instance/AZ (AZ-1a + AZ-1b), nằm ở Public Subnet, là jump host SSH duy nhất vào EC2 private — chỉ cho phép SSH từ Client VPN CIDR |
+| Bastion Host | Production | 1 instance/AZ (AZ-1a + AZ-1b), nằm ở **Private Subnet**, là jump host SSH duy nhất vào EC2 private — chỉ cho phép SSH từ Client VPN CIDR. Dùng NAT GW để SSM Agent kết nối ra ngoài (không cần Public IP) |
 | EC2 R&D | R&D | 1 instance/AZ, không gắn ALB, cập nhật qua NAT |
 | EFS | R&D | Shared storage mount vào tất cả EC2 R&D |
 | S3 | Shared | Truy cập từ cả 2 VPC qua Gateway Endpoint |
@@ -145,7 +145,7 @@ terraform-project/
 │   │
 │   ├── ec2/                        # EC2 instances (Production ASG + R&D fixed)
 │   │   ├── main.tf                 #   prod: Bastion Host — aws_instance × 2
-│   │   │                           #         (1 instance/AZ, Public Subnet, jump host SSH)
+│   │   │                           #         (1 instance/AZ, Private Subnet, jump host SSH — SSM qua NAT GW)
 │   │   │                           #         Launch Template + ASG cho web-portal
 │   │   │                           #         Launch Template + ASG cho erp-crm
 │   │   │                           #         (erp-crm KHÔNG gắn ALB target group)
@@ -213,6 +213,7 @@ terraform-project/
 ├── scripts/
 │   ├── bootstrap_backend.sh        # Tạo S3 bucket + DynamoDB cho remote state
 │   ├── generate_vpn_certs.sh       # Tạo PKI bằng easy-rsa, import vào ACM
+│   ├── generate_ssh_keys.sh        # Tạo SSH key pairs cho bastion/web/erp/rnd
 │   ├── generate_ovpn.sh            # Xuất file .ovpn cho remote staff
 │   └── plan.sh                     # terraform fmt + validate + plan -out=tfplan
 │
@@ -259,6 +260,7 @@ Internet Gateway → Internet
 Mọi EC2 (kể cả R&D) cập nhật packages `yum update`, download dependencies qua NAT Gateway — không cần public IP.
 
 ### Remote Staff → Hạ tầng
+
 ```
 Remote Staff
     │ OpenVPN (172.16.0.0/22)
@@ -266,18 +268,26 @@ Remote Staff
     │ Xác thực lớp 2: Active Directory credentials (AWS Managed Microsoft AD)
     ▼
 Client VPN Endpoint (Production VPC)
-    │
+    │ associate vào Prod private subnet
+    │ NAT source IP: 172.16.x.x → 10.0.x.x (IP của ENI trong Prod subnet)
     ▼
-Transit Gateway
-    ├──► Production VPC (10.0.0.0/16)
-    │        └── SSH (port 22) ──► Bastion Host (Public Subnet AZ-1a / AZ-1b)
-    │                                   └── SSH jump ──► EC2 Web Portal / ERP/CRM
-    │                                                     (Private Subnet)
-    └──► R&D VPC (10.1.0.0/16)
-             └── SSH (port 22) ──► EC2 R&D (Private Subnet)
+Prod Private Subnet (10.0.0.0/16)
+    ├──► Bastion Host (SSH port 22) — SG cho phép 10.0.0.0/16
+    │        └── SSH jump ──► EC2 Web Portal / ERP/CRM (Private Subnet)
+    │
+    └── route 10.1.0.0/16 → TGW ──► R&D VPC
+                                         └── EC2 R&D (SSH port 22) — SG cho phép 10.0.0.0/16
 ```
 
-> Remote Staff không SSH trực tiếp vào EC2 private. Luồng bắt buộc: **VPN → Bastion → EC2**. Security Group của EC2 Web Portal và ERP/CRM chỉ nhận SSH từ `sg-bastion`, không mở port 22 ra VPN CIDR trực tiếp.
+> **Tại sao source IP là `10.0.x.x` chứ không phải `172.16.x.x`?**
+>
+> AWS Client VPN **không attach trực tiếp vào Transit Gateway** như Site-to-Site VPN. Thay vào đó nó **associate vào subnet** (Prod private subnet) và tạo ENI trong subnet đó. Khi VPN client gửi packet, AWS thực hiện **NAT source IP** thành IP của ENI trong Prod subnet trước khi inject traffic vào VPC.
+>
+> Hệ quả thực tế: Security Group của **tất cả EC2** muốn nhận SSH từ VPN phải cho phép `10.0.0.0/16` (Prod VPC CIDR) thay vì `172.16.0.0/22` (VPN CIDR). Tương tự, route table không cần route `172.16.0.0/22` — return traffic đi theo đường `10.0.0.0/16` bình thường.
+>
+> Nếu muốn giữ nguyên source IP `172.16.x.x` cần dùng **AWS Site-to-Site VPN + TGW attachment** — kiến trúc khác hẳn, phù hợp cho kết nối văn phòng, không phải remote staff access.
+
+> Remote Staff không SSH trực tiếp vào EC2 Web Portal / ERP/CRM. Luồng bắt buộc: **VPN → Bastion → EC2**. Security Group của EC2 Web Portal và ERP/CRM chỉ nhận SSH từ `sg-bastion`.
 
 ### S3 Access (không qua Internet)
 ```
@@ -365,7 +375,7 @@ Terraform tự động đọc các biến trên, không cần khai báo thêm.
 
 ## 6. Triển khai lần đầu
 
-> **Tổng quan thứ tự:** Clone → IAM global → (tùy chọn) Remote state → (tùy chọn) VPN certs → Điền `secret.tfvars` → Cập nhật `terraform.tfvars` → Apply giai đoạn 1 → Apply giai đoạn 2 → (tùy chọn) Tạo file `.ovpn`
+> **Tổng quan thứ tự:** Clone → IAM global → (tùy chọn) Remote state → (tùy chọn) VPN certs → Điền `secret.tfvars` → Tạo SSH key pairs → Cập nhật `terraform.tfvars` → Apply giai đoạn 1 → Apply giai đoạn 2 → (tùy chọn) Tạo file `.ovpn`
 
 ---
 
@@ -543,7 +553,69 @@ vpn_client_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/ccc
 
 ---
 
-### Bước 6 — Cập nhật `terraform.tfvars`
+### Bước 6 — Tạo SSH key pairs (bắt buộc nếu muốn SSH vào EC2)
+
+Project quản lý SSH key pairs theo từng role: `bastion`, `web`, `erp`, `rnd`. Terraform đọc public key (`.pub`) từ đường dẫn cấu hình và import lên AWS Key Pair — private key (`.pem`) **không bao giờ rời máy local**.
+
+Nếu bỏ qua bước này (để các biến `*_public_key_path` trống), Terraform sẽ không tạo key pair → các instance không có key → **chỉ truy cập được qua SSM Session Manager**, không SSH được.
+
+```bash
+chmod +x scripts/generate_ssh_keys.sh
+bash scripts/generate_ssh_keys.sh
+```
+
+Script tạo 4 cặp key tại:
+
+```
+ssh-keys/
+├── prod/
+│   ├── bastion.pem      # Private key Bastion — SSH vào Bastion từ Client VPN
+│   ├── bastion.pub
+│   ├── web.pem          # Private key Web Portal — dùng Agent Forwarding qua Bastion
+│   ├── web.pub
+│   ├── erp.pem          # Private key ERP/CRM — dùng Agent Forwarding qua Bastion
+│   └── erp.pub
+└── rnd/
+    ├── rnd.pem          # Private key R&D — SSH trực tiếp qua Client VPN
+    └── rnd.pub
+```
+
+Sau đó thêm các đường dẫn vào `terraform.tfvars` (hoặc `secret.tfvars`):
+
+```hcl
+bastion_public_key_path = "ssh-keys/prod/bastion.pub"
+web_public_key_path     = "ssh-keys/prod/web.pub"
+erp_public_key_path     = "ssh-keys/prod/erp.pub"
+rnd_public_key_path     = "ssh-keys/rnd/rnd.pub"
+```
+
+> **Bảo mật:** Thư mục `ssh-keys/` đã có trong `.gitignore`. Lưu giữ các file `.pem` ở nơi an toàn (1Password, AWS Secrets Manager, v.v.) — mất private key đồng nghĩa với không SSH được vào instance đó.
+
+**Luồng SSH sau khi có key pair và kết nối Client VPN:**
+
+```bash
+# Bước 1 — SSH vào Bastion (nằm ở private subnet, truy cập qua VPN)
+ssh -i ssh-keys/prod/bastion.pem -A ec2-user@<bastion_private_ip>
+#   -A : bật SSH Agent Forwarding — key web/erp được forward từ máy local
+
+# Bước 2 — Từ Bastion, jump vào EC2 Web Portal hoặc ERP/CRM
+ssh ec2-user@<web_private_ip>    # dùng web.pem đã được agent forward
+ssh ec2-user@<erp_private_ip>    # dùng erp.pem đã được agent forward
+
+# R&D staff — SSH trực tiếp (không cần qua Bastion)
+ssh -i ssh-keys/rnd/rnd.pem ec2-user@<rnd_private_ip>
+```
+
+Lấy private IP của các instance sau khi apply:
+
+```bash
+terraform output bastion_private_ip_1a   # Bastion AZ-1a
+terraform output bastion_private_ip_1b   # Bastion AZ-1b
+```
+
+---
+
+### Bước 7 — Cập nhật `terraform.tfvars`
 
 Mở `terraform.tfvars` và thay thế các placeholder còn lại:
 
@@ -567,7 +639,7 @@ aws sts get-caller-identity --query Account --output text
 
 ---
 
-### Bước 7 — Init, Plan và Apply theo 2 giai đoạn
+### Bước 8 — Init, Plan và Apply theo 2 giai đoạn
 
 Do Transit Gateway attachment cần subnet ID (được tạo ở bước subnet), trong khi route table của subnet lại cần Transit Gateway attachment ID đã tồn tại — đây là circular dependency. Giải pháp dùng flag `enable_tgw_routes`: lần apply đầu tạo toàn bộ hạ tầng kể cả TGW attachment nhưng **chưa tạo route**, lần apply thứ hai mới bật route.
 
@@ -612,10 +684,12 @@ terraform apply tfplan
 ```
 
 Plan giai đoạn 2 tạo 4 routes:
-- `rt-prod-private-1a` → `10.1.0.0/16` via Transit Gateway
+- `rt-prod-private-1a` → `10.1.0.0/16` via Transit Gateway (cross-VPC Prod → R&D)
 - `rt-prod-private-1b` → `10.1.0.0/16` via Transit Gateway
-- `rt-rnd-private-2a` → `10.0.0.0/16` via Transit Gateway
+- `rt-rnd-private-2a` → `10.0.0.0/16` via Transit Gateway (cross-VPC R&D → Prod)
 - `rt-rnd-private-2b` → `10.0.0.0/16` via Transit Gateway
+
+> **Không cần route `172.16.0.0/22`** — AWS Client VPN NAT source IP thành `10.0.x.x` khi forward qua Prod subnet, nên return traffic từ EC2 đi theo đường `10.0.0.0/16` bình thường (xem giải thích chi tiết ở [mục 3 — Luồng traffic](#3-luồng-traffic)).
 
 > **Lưu ý:** Bạn cũng có thể sửa trực tiếp `enable_tgw_routes = true` trong `terraform.tfvars` thay vì dùng tham số script — cả hai cách cho kết quả giống nhau.
 
@@ -641,7 +715,7 @@ terraform apply tfplan
 
 ---
 
-### Bước 8 — Xác nhận hạ tầng hoạt động
+### Bước 9 — Xác nhận hạ tầng hoạt động
 
 Sau khi apply thành công, lấy các output quan trọng:
 
@@ -668,7 +742,7 @@ terraform output tgw_id
 
 ---
 
-### Bước 9 — Tạo file `.ovpn` cho remote staff (chỉ khi đã bật Client VPN)
+### Bước 10 — Tạo file `.ovpn` cho remote staff (chỉ khi đã bật Client VPN)
 
 ```bash
 chmod +x scripts/generate_ovpn.sh
@@ -759,7 +833,7 @@ Phase 4:  prod_security_groups + rnd_security_groups
           ├──► prod_alb
           │        └──► prod_ec2 (web ASG gắn ALB target group)
           │                      (erp ASG không gắn ALB)
-          │                      (bastion × 2 — Public Subnet AZ-1a/1b)
+          │                      (bastion × 2 — Private Subnet AZ-1a/1b, SSM qua NAT GW)
           │
           ├──► prod_rds
           ├──► prod_directory_service
@@ -900,7 +974,7 @@ Security Group của EC2 Web Portal, ERP/CRM và Bastion Host đã bật ICMP ru
    # Kiểm tra trong AWS Console: VPC → Route Tables → chọn rt-prod-private-1a
    ```
 
-2. **Security Group nguồn** — ICMP rule chỉ cho phép từ VPC CIDR, không phải từ VPN CIDR (`172.16.0.0/22`). Ping từ máy remote staff qua VPN sẽ bị chặn; ping giữa các EC2 trong cùng/khác VPC mới được cho phép.
+2. **Security Group nguồn** — ICMP rule chỉ cho phép từ VPC CIDR (`10.0.0.0/16`, `10.1.0.0/16`), không phải VPN CIDR (`172.16.0.0/22`). Đây là đúng thiết kế vì AWS Client VPN NAT source IP thành `10.0.x.x` — ping từ máy remote staff đến EC2 cùng VPC hoạt động bình thường, ping cross-VPC cũng hoạt động sau khi có TGW route.
 
 3. **`enable_tgw_routes`** — nếu cross-VPC ping fail, xác nhận đã apply Giai đoạn 2 (`enable_tgw_routes = true`):
    ```bash

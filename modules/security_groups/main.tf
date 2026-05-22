@@ -196,12 +196,15 @@ resource "aws_security_group" "ds" {
 }
 
 # ── Bastion Host Security Group (Production) ─────────────────────
-# Bastion nằm ở Public Subnet, có 2 phương thức truy cập:
+# Bastion nằm ở Private Subnet, có 2 phương thức truy cập:
 #   1. AWS SSM Session Manager — không cần port 22, truy cập qua HTTPS (443)
 #      Yêu cầu: IAM instance profile có AmazonSSMManagedInstanceCore
 #      Lệnh: aws ssm start-session --target <instance-id>
-#   2. SSH qua Client VPN — port 22 từ VPN CIDR, dùng bastion key pair
+#   2. SSH qua Client VPN — port 22
 #      Yêu cầu: Client VPN connected + ssh-keys/prod/bastion.pem
+#      Lưu ý: AWS Client VPN NAT source IP thành Prod subnet IP (10.0.x.x)
+#      khi forward traffic qua subnet association → source đến Bastion là
+#      10.0.0.0/16, không phải 172.16.0.0/22.
 #
 # EC2 Web/ERP chỉ nhận SSH từ Bastion SG → không expose port 22 ra ngoài
 resource "aws_security_group" "bastion" {
@@ -210,13 +213,15 @@ resource "aws_security_group" "bastion" {
   description = "Bastion Host: SSM Session Manager + SSH from Client VPN"
   vpc_id      = var.vpc_id
 
-  # SSH từ Client VPN (phương thức 2 — dự phòng khi SSM không khả dụng)
+  # SSH từ Client VPN — source IP bị NAT thành Prod VPC CIDR (10.0.0.0/16)
+  # khi đi qua Client VPN subnet association. Giữ vpn_cidr để document intent,
+  # thêm prod_vpc_cidr để match source IP thực tế sau NAT.
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [var.vpn_cidr]
-    description = "SSH from Client VPN (fallback - prefer SSM Session Manager)"
+    cidr_blocks = [var.vpn_cidr, var.prod_vpc_cidr]
+    description = "SSH from Client VPN (NAT d to Prod VPC CIDR) and Prod VPC"
   }
 
   ingress {
@@ -246,12 +251,15 @@ resource "aws_security_group" "rnd_ec2" {
   description = "R&D EC2: SSH from VPN, all internal"
   vpc_id      = var.vpc_id
 
+  # SSH từ Client VPN — source IP sau khi NAT tại Prod subnet = 10.0.0.0/16
+  # AWS Client VPN NAT traffic khi forward qua subnet association,
+  # nên source IP đến EC2 R&D là Prod VPC CIDR, không phải 172.16.x.x.
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [var.vpn_cidr]
-    description = "SSH from Client VPN"
+    cidr_blocks = [var.vpn_cidr, var.prod_vpc_cidr]
+    description = "SSH from Client VPN (NAT d through Prod subnet) and Prod VPC"
   }
 
   ingress {

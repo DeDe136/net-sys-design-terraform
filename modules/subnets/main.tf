@@ -162,6 +162,11 @@ resource "aws_route_table_association" "private_1b" {
 # Tạo SAU KHI TGW attachments đã hoàn tất (lần apply thứ 2).
 # Không còn phụ thuộc vào tgw_attachment_ids từ module tgw_attachments
 # → không còn circular dependency.
+#
+# Lưu ý: KHÔNG cần route 172.16.0.0/22 → TGW ở đây.
+# AWS Client VPN NAT source IP thành Prod subnet IP (10.0.x.x) khi forward
+# traffic qua subnet association → reply traffic dùng đường 10.0.0.0/16
+# bình thường, không cần route riêng cho VPN CIDR.
 resource "aws_route" "private_1a_tgw" {
   count                  = var.enable_tgw_routes ? 1 : 0
   route_table_id         = aws_route_table.private_1a.id
@@ -174,30 +179,6 @@ resource "aws_route" "private_1b_tgw" {
   count                  = var.enable_tgw_routes ? 1 : 0
   route_table_id         = aws_route_table.private_1b.id
   destination_cidr_block = var.remote_vpc_cidr
-  transit_gateway_id     = var.tgw_id
-  depends_on             = [aws_route_table.private_1b]
-}
-
-# ── VPN Client Return Routes ──────────────────────────────────────
-# FIX: SSH từ VPN (172.16.0.0/22) timeout dù ping được vì:
-#   - EC2 nhận packet từ 172.16.x.x nhưng không có route trả về
-#   - Default route (0.0.0.0/0 → NAT GW) không biết 172.16.x.x là ai
-#   - Packet reply bị drop → TCP handshake không hoàn thành → SSH timeout
-# Giải pháp: thêm route 172.16.0.0/22 → TGW vào cả 2 private RTs.
-# TGW sẽ forward về Client VPN endpoint (vì VPN associate vào prod private subnet).
-# Guard bằng enable_tgw_routes (cùng flag với cross-VPC routes).
-resource "aws_route" "private_1a_vpn" {
-  count                  = (var.enable_tgw_routes && var.vpn_cidr != null) ? 1 : 0
-  route_table_id         = aws_route_table.private_1a.id
-  destination_cidr_block = var.vpn_cidr
-  transit_gateway_id     = var.tgw_id
-  depends_on             = [aws_route_table.private_1a]
-}
-
-resource "aws_route" "private_1b_vpn" {
-  count                  = (var.enable_tgw_routes && var.vpn_cidr != null) ? 1 : 0
-  route_table_id         = aws_route_table.private_1b.id
-  destination_cidr_block = var.vpn_cidr
   transit_gateway_id     = var.tgw_id
   depends_on             = [aws_route_table.private_1b]
 }

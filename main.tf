@@ -106,7 +106,6 @@ module "prod_subnets" {
   # Lần 1: false (attachment chưa có) → route chưa tạo
   # Lần 2: true  (attachment đã có)  → route được tạo
   enable_tgw_routes = var.enable_tgw_routes
-  vpn_cidr          = var.vpn_client_cidr   # FIX: return route 172.16.0.0/22 → TGW cho prod private subnets
 
   depends_on = [module.transit_gateway]
 }
@@ -134,7 +133,6 @@ module "rnd_subnets" {
   remote_vpc_cidr = var.prod_vpc_cidr
 
   enable_tgw_routes = var.enable_tgw_routes
-  vpn_cidr          = var.vpn_client_cidr   # FIX: return route 172.16.0.0/22 → TGW cho rnd private subnets
 
   depends_on = [module.transit_gateway]
 }
@@ -172,10 +170,8 @@ module "tgw_attachments" {
     module.rnd_subnets.tgw_subnet_1b_id,
   ])
 
-  # FIX: Static route 172.16.0.0/22 → Prod attachment trong TGW RT.
-  # Thiếu route này → TGW drop reply từ R&D về VPN client → SSH timeout.
-  vpn_cidr          = var.vpn_client_cidr
-  enable_tgw_routes = var.enable_tgw_routes
+  # FIX: Static route 172.16.0.0/22 không cần thiết vì Client VPN NAT
+  # source IP thành Prod subnet IP — TGW chỉ thấy 10.0.x.x ↔ 10.1.x.x.
 
   depends_on = [module.prod_subnets, module.rnd_subnets]
 }

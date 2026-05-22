@@ -50,12 +50,3 @@ variable "tgw_attachment_ids" {
   default     = []
   description = "DEPRECATED — không còn dùng để guard route. Giữ lại để tránh breaking change nếu state cũ còn tham chiếu."
 }
-
-# ── VPN Client CIDR ───────────────────────────────────────────────
-# Route return traffic từ EC2 về VPN clients (172.16.0.0/22) qua TGW.
-# Thiếu route này → SSH timeout dù ping được (ICMP/TCP xử lý khác nhau).
-variable "vpn_cidr" {
-  type        = string
-  default     = null
-  description = "Client VPN CIDR (ví dụ: 172.16.0.0/22). Tạo aws_route → TGW trong private RTs để EC2 reply về VPN clients."
-}
