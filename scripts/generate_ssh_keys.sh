@@ -29,6 +29,15 @@
 #   ssh ec2-user@<web_private_ip>               # từ Bastion → Web (dùng web key qua agent)
 #   ssh ec2-user@<erp_private_ip>               # từ Bastion → ERP (dùng erp key qua agent)
 #
+#   # Xóa toàn bộ các key đang có trong agent
+#   ssh-add -D
+#   # Hoặc xóa từng key nếu muốn giữ lại một số key khác
+#   ssh-add -d ssh-keys/prod/bastion.pem
+#   ssh-add -d ssh-keys/prod/web.pem
+#   ssh-add -d ssh-keys/prod/erp.pem
+#   # Kiểm tra lại các key đang có trong agent
+#   ssh-add -l
+#
 #   [R&D — SSH trực tiếp qua Client VPN]
 #   ssh -i ssh-keys/rnd/rnd.pem ec2-user@<rnd_private_ip>
 #
