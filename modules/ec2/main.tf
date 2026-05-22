@@ -77,11 +77,12 @@ resource "aws_key_pair" "rnd" {
 # ─────────────────────────────────────────────────────────────────
 # PRODUCTION — Bastion Host (HA: 1 instance mỗi AZ)
 #
-# Vị trí: Public Subnet (AZ-1a + AZ-1b) — Production VPC
-# Luồng SSH: Remote Staff → Client VPN → Bastion → EC2 Private Subnet
+# Vị trí: Private Subnet (AZ-1a + AZ-1b) — Production VPC
+# Lý do private subnet: SSM Agent cần ra internet qua NAT GW để kết nối
+# AWS SSM endpoints. Public subnet không có Public IP → SSM Agent fail.
+# Staff truy cập qua Client VPN → private IP (không cần Public IP).
 #
-# Bastion KHÔNG gắn ALB. Staff SSH vào Bastion trước (port 22),
-# sau đó jump tiếp vào Web Portal / ERP/CRM qua private IP.
+# Luồng SSH: Remote Staff → Client VPN → Bastion (private IP) → EC2 Private Subnet
 # ─────────────────────────────────────────────────────────────────
 resource "aws_instance" "bastion_1a" {
   count         = var.env == "prod" ? 1 : 0

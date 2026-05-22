@@ -11,12 +11,12 @@ variable "bastion_instance_type" {
 variable "bastion_subnet_1a_id" {
   type        = string
   default     = ""
-  description = "Public Subnet AZ-1a — nơi đặt Bastion Host"
+  description = "Private Subnet AZ-1a — nơi đặt Bastion Host. Dùng private subnet để SSM Agent đi qua NAT GW (không cần Public IP)."
 }
 variable "bastion_subnet_1b_id" {
   type        = string
   default     = ""
-  description = "Public Subnet AZ-1b — nơi đặt Bastion Host (HA)"
+  description = "Private Subnet AZ-1b — nơi đặt Bastion Host (HA). Dùng private subnet để SSM Agent đi qua NAT GW."
 }
 variable "sg_bastion_id" {
   type        = string
@@ -26,12 +26,6 @@ variable "sg_bastion_id" {
 
 # Optional: IAM instance profile for SSM access
 variable "iam_instance_profile" {
-  type    = string
-  default = ""
-}
-
-# Optional: EC2 key pair name (leave empty to use SSM Session Manager)
-variable "key_name" {
   type    = string
   default = ""
 }

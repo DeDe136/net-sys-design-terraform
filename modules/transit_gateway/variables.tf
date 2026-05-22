@@ -33,3 +33,21 @@ variable "create_rnd_attachment" {
   default     = true
   description = "Set true to create TGW attachment for R&D VPC. Set false to skip."
 }
+
+# ── VPN Client CIDR ───────────────────────────────────────────────
+# Cần để tạo static route trong TGW default route table:
+#   172.16.0.0/22 → Prod VPC attachment
+# Client VPN nằm trong Prod VPC, nên reply từ R&D về VPN client
+# phải đi qua TGW → Prod attachment → Client VPN endpoint.
+# Nếu không có route này, TGW drop packet reply → SSH timeout.
+variable "vpn_cidr" {
+  type        = string
+  default     = null
+  description = "Client VPN CIDR (ví dụ: 172.16.0.0/22). Tạo static route trong TGW RT → Prod attachment."
+}
+
+variable "enable_tgw_routes" {
+  type        = bool
+  default     = false
+  description = "Tạo TGW static route sau khi attachments đã available (lần apply thứ 2)."
+}

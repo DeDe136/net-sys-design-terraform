@@ -178,6 +178,30 @@ resource "aws_route" "private_1b_tgw" {
   depends_on             = [aws_route_table.private_1b]
 }
 
+# ── VPN Client Return Routes ──────────────────────────────────────
+# FIX: SSH từ VPN (172.16.0.0/22) timeout dù ping được vì:
+#   - EC2 nhận packet từ 172.16.x.x nhưng không có route trả về
+#   - Default route (0.0.0.0/0 → NAT GW) không biết 172.16.x.x là ai
+#   - Packet reply bị drop → TCP handshake không hoàn thành → SSH timeout
+# Giải pháp: thêm route 172.16.0.0/22 → TGW vào cả 2 private RTs.
+# TGW sẽ forward về Client VPN endpoint (vì VPN associate vào prod private subnet).
+# Guard bằng enable_tgw_routes (cùng flag với cross-VPC routes).
+resource "aws_route" "private_1a_vpn" {
+  count                  = (var.enable_tgw_routes && var.vpn_cidr != null) ? 1 : 0
+  route_table_id         = aws_route_table.private_1a.id
+  destination_cidr_block = var.vpn_cidr
+  transit_gateway_id     = var.tgw_id
+  depends_on             = [aws_route_table.private_1a]
+}
+
+resource "aws_route" "private_1b_vpn" {
+  count                  = (var.enable_tgw_routes && var.vpn_cidr != null) ? 1 : 0
+  route_table_id         = aws_route_table.private_1b.id
+  destination_cidr_block = var.vpn_cidr
+  transit_gateway_id     = var.tgw_id
+  depends_on             = [aws_route_table.private_1b]
+}
+
 # ── TGW Subnet Route Table ────────────────────────────────────────
 # Dedicated RT cho TGW subnets — không cần route ra ngoài,
 # chỉ cần local VPC route (tự động có sẵn trong AWS).
