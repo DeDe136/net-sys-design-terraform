@@ -64,6 +64,11 @@ secret.tfvars
 easy-rsa/
 
 # ─────────────────────────────────────────────────────────────────
+# SSH KEY PAIRS — TUYỆT ĐỐI KHÔNG COMMIT
+# Được tạo bởi scripts/generate_ssh_keys.sh
+/ssh-keys/
+
+# ─────────────────────────────────────────────────────────────────
 # AWS CREDENTIALS — TUYỆT ĐỐI KHÔNG COMMIT
 # ─────────────────────────────────────────────────────────────────
 .aws/

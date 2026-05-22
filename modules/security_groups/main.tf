@@ -196,20 +196,27 @@ resource "aws_security_group" "ds" {
 }
 
 # ── Bastion Host Security Group (Production) ─────────────────────
-# Bastion nằm ở Public Subnet, chỉ nhận SSH từ VPN CIDR
-# EC2 private (Web/ERP) chỉ nhận SSH từ Bastion SG → không expose port 22 ra ngoài
+# Bastion nằm ở Public Subnet, có 2 phương thức truy cập:
+#   1. AWS SSM Session Manager — không cần port 22, truy cập qua HTTPS (443)
+#      Yêu cầu: IAM instance profile có AmazonSSMManagedInstanceCore
+#      Lệnh: aws ssm start-session --target <instance-id>
+#   2. SSH qua Client VPN — port 22 từ VPN CIDR, dùng bastion key pair
+#      Yêu cầu: Client VPN connected + ssh-keys/prod/bastion.pem
+#
+# EC2 Web/ERP chỉ nhận SSH từ Bastion SG → không expose port 22 ra ngoài
 resource "aws_security_group" "bastion" {
   count       = var.env == "prod" ? 1 : 0
   name        = "sec-bastion-${var.env}"
-  description = "Bastion Host: SSH from Client VPN only"
+  description = "Bastion Host: SSM Session Manager + SSH from Client VPN"
   vpc_id      = var.vpc_id
 
+  # SSH từ Client VPN (phương thức 2 — dự phòng khi SSM không khả dụng)
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = [var.vpn_cidr]
-    description = "SSH from Client VPN"
+    description = "SSH from Client VPN (fallback - prefer SSM Session Manager)"
   }
 
   ingress {
@@ -220,6 +227,8 @@ resource "aws_security_group" "bastion" {
     description = "ICMP from Production VPC and R&D VPC - allow cross-VPC ping"
   }
 
+  # Egress mở hoàn toàn — cần để SSM Agent gọi ra SSM endpoints (HTTPS 443)
+  # và để Bastion SSH tiếp vào EC2 private subnet
   egress {
     from_port   = 0
     to_port     = 0

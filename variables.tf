@@ -164,3 +164,53 @@ variable "enable_tgw_routes" {
   default     = false
   description = "false = lần apply đầu (attachment chưa có). true = lần apply thứ 2 để tạo TGW routes."
 }
+
+# ─────────────────────────────────────────────────────────────────
+# SSH Key Pair — Public key paths
+#
+# Workflow:
+#   1. Chạy scripts/generate_ssh_keys.sh để sinh key pairs tự động
+#   2. Script tạo ra:
+#       ssh-keys/prod/bastion.pem  (private key — gitignored)
+#       ssh-keys/prod/bastion.pub  (public key — dùng ở đây)
+#       ssh-keys/prod/web.pem
+#       ssh-keys/prod/web.pub
+#       ssh-keys/prod/erp.pem
+#       ssh-keys/prod/erp.pub
+#       ssh-keys/rnd/rnd.pem
+#       ssh-keys/rnd/rnd.pub
+#
+# Luồng SSH sau khi cấu hình:
+#   [Production]
+#   Staff → Client VPN → SSH Bastion (bastion.pem)
+#           hoặc → AWS SSM Session Manager → Bastion (không cần key)
+#   Bastion → EC2 Web  (agent forward web.pem từ máy local của staff)
+#   Bastion → EC2 ERP  (agent forward erp.pem từ máy local của staff)
+#
+#   [R&D]
+#   R&D Staff → Client VPN → SSH EC2 R&D trực tiếp (rnd.pem)
+# ─────────────────────────────────────────────────────────────────
+
+variable "bastion_public_key_path" {
+  type        = string
+  default     = "ssh-keys/prod/bastion.pub"
+  description = "Đường dẫn public key Bastion Host. Sinh bằng scripts/generate_ssh_keys.sh. Private key tại ssh-keys/prod/bastion.pem (gitignored)."
+}
+
+variable "web_public_key_path" {
+  type        = string
+  default     = "ssh-keys/prod/web.pub"
+  description = "Đường dẫn public key EC2 Web Portal. Staff dùng SSH Agent Forwarding qua Bastion. Private key tại ssh-keys/prod/web.pem (gitignored)."
+}
+
+variable "erp_public_key_path" {
+  type        = string
+  default     = "ssh-keys/prod/erp.pub"
+  description = "Đường dẫn public key EC2 ERP/CRM. Staff dùng SSH Agent Forwarding qua Bastion. Private key tại ssh-keys/prod/erp.pem (gitignored)."
+}
+
+variable "rnd_public_key_path" {
+  type        = string
+  default     = "ssh-keys/rnd/rnd.pub"
+  description = "Đường dẫn public key EC2 R&D. R&D staff SSH trực tiếp qua Client VPN. Private key tại ssh-keys/rnd/rnd.pem (gitignored)."
+}

@@ -5,7 +5,74 @@
 #   Internet → ALB → EC2 Web Portal (via NAT cho package updates)
 #   EC2 Web Portal → EC2 ERP/CRM (internal, port 8080/8443)
 #   EC2 R&D → Internet via NAT Gateway (package updates only, no ALB)
+#
+# SSH / Access flow:
+#   Bastion  : truy cập qua AWS SSM Session Manager (không cần port 22 public)
+#              hoặc Client VPN → SSH với bastion key pair
+#   Web/ERP  : Staff SSH từ Bastion → EC2 Web/ERP dùng web/erp key pair
+#              (SSH Agent Forwarding — private key KHÔNG đặt trên Bastion)
+#   R&D      : R&D staff SSH trực tiếp qua Client VPN → EC2 R&D dùng rnd key pair
+#              (không cần qua Bastion)
 # ══════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────────
+# KEY PAIRS — Tạo từ public key được sinh bởi scripts/generate_ssh_keys.sh
+#
+# Private keys lưu tại ssh-keys/<env>/ (gitignored).
+# Chỉ import public key lên AWS — private key không bao giờ rời máy local.
+# ─────────────────────────────────────────────────────────────────
+
+# Bastion key pair (Production) — dùng để SSH vào Bastion từ Client VPN
+resource "aws_key_pair" "bastion" {
+  count      = var.env == "prod" && var.bastion_public_key_path != "" ? 1 : 0
+  key_name   = "kp-prod-bastion"
+  public_key = file(var.bastion_public_key_path)
+
+  tags = {
+    Name = "kp-prod-bastion"
+    Env  = "prod"
+    Role = "bastion"
+  }
+}
+
+# Web Portal key pair (Production) — Staff dùng SSH Agent Forwarding qua Bastion
+resource "aws_key_pair" "web" {
+  count      = var.env == "prod" && var.web_public_key_path != "" ? 1 : 0
+  key_name   = "kp-prod-web"
+  public_key = file(var.web_public_key_path)
+
+  tags = {
+    Name = "kp-prod-web"
+    Env  = "prod"
+    Role = "web-portal"
+  }
+}
+
+# ERP/CRM key pair (Production) — Staff dùng SSH Agent Forwarding qua Bastion
+resource "aws_key_pair" "erp" {
+  count      = var.env == "prod" && var.erp_public_key_path != "" ? 1 : 0
+  key_name   = "kp-prod-erp"
+  public_key = file(var.erp_public_key_path)
+
+  tags = {
+    Name = "kp-prod-erp"
+    Env  = "prod"
+    Role = "erp-crm"
+  }
+}
+
+# R&D key pair — R&D staff SSH trực tiếp (không qua Bastion)
+resource "aws_key_pair" "rnd" {
+  count      = var.env == "rnd" && var.rnd_public_key_path != "" ? 1 : 0
+  key_name   = "kp-rnd-ec2"
+  public_key = file(var.rnd_public_key_path)
+
+  tags = {
+    Name = "kp-rnd-ec2"
+    Env  = "rnd"
+    Role = "rnd-testing"
+  }
+}
 
 # ─────────────────────────────────────────────────────────────────
 # PRODUCTION — Bastion Host (HA: 1 instance mỗi AZ)
@@ -24,14 +91,26 @@ resource "aws_instance" "bastion_1a" {
   subnet_id                   = var.bastion_subnet_1a_id
   vpc_security_group_ids      = [var.sg_bastion_id]
   associate_public_ip_address = false  # Staff reach qua VPN private IP, không cần Public IP
-  key_name                    = var.key_name != "" ? var.key_name : null
-  iam_instance_profile        = var.iam_instance_profile != "" ? var.iam_instance_profile : null
+
+  # Dùng key pair được tạo từ public key local (bastion_public_key_path)
+  # Nếu không cấu hình public key path, bastion chỉ truy cập được qua SSM
+  key_name             = length(aws_key_pair.bastion) > 0 ? aws_key_pair.bastion[0].key_name : null
+  iam_instance_profile = var.iam_instance_profile != "" ? var.iam_instance_profile : null
 
   user_data = base64encode(<<-USERDATA
     #!/bin/bash
     yum update -y
-    # Hardening cơ bản: chỉ cho phép SSH, disable password auth
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    # SSM Agent đã được cài sẵn trên Amazon Linux 2 và IAM instance profile
+    # đã có policy AmazonSSMManagedInstanceCore — không cần cài thêm gì.
+
+    # ── SSH Hardening ──────────────────────────────────────────────
+    # Tắt password auth — chỉ cho phép key-based SSH
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+    # Tắt root login qua SSH
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+    # Bật SSH Agent Forwarding — cho phép staff dùng key web/erp
+    # từ máy local để SSH tiếp vào EC2 Web/ERP qua Bastion
+    sed -i 's/^#*AllowAgentForwarding.*/AllowAgentForwarding yes/' /etc/ssh/sshd_config
     systemctl restart sshd
   USERDATA
   )
@@ -52,13 +131,22 @@ resource "aws_instance" "bastion_1b" {
   subnet_id                   = var.bastion_subnet_1b_id
   vpc_security_group_ids      = [var.sg_bastion_id]
   associate_public_ip_address = false  # Staff reach qua VPN private IP, không cần Public IP
-  key_name                    = var.key_name != "" ? var.key_name : null
-  iam_instance_profile        = var.iam_instance_profile != "" ? var.iam_instance_profile : null
+
+  key_name             = length(aws_key_pair.bastion) > 0 ? aws_key_pair.bastion[0].key_name : null
+  iam_instance_profile = var.iam_instance_profile != "" ? var.iam_instance_profile : null
 
   user_data = base64encode(<<-USERDATA
     #!/bin/bash
     yum update -y
-    sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+    # SSM Agent đã được cài sẵn trên Amazon Linux 2 và IAM instance profile
+    # đã có policy AmazonSSMManagedInstanceCore — không cần cài thêm gì.
+
+    # ── SSH Hardening ──────────────────────────────────────────────
+    sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+    sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+    # Bật SSH Agent Forwarding — cho phép staff dùng key web/erp
+    # từ máy local để SSH tiếp vào EC2 Web/ERP qua Bastion
+    sed -i 's/^#*AllowAgentForwarding.*/AllowAgentForwarding yes/' /etc/ssh/sshd_config
     systemctl restart sshd
   USERDATA
   )
@@ -95,9 +183,9 @@ resource "aws_launch_template" "web" {
     }
   }
 
-  key_name = var.key_name != "" ? var.key_name : null
-
-  # User data: Cài Nginx Web Portal với health check endpoint cho ALB
+  # Dùng key pair web riêng — staff SSH từ Bastion vào Web Portal
+  # bằng SSH Agent Forwarding (private key giữ trên máy local, không copy lên Bastion)
+  key_name = length(aws_key_pair.web) > 0 ? aws_key_pair.web[0].key_name : null
   user_data = base64encode(<<-USERDATA
 #!/bin/bash
 set -euo pipefail
@@ -252,7 +340,9 @@ resource "aws_launch_template" "erp" {
     }
   }
 
-  key_name = var.key_name != "" ? var.key_name : null
+  # Dùng key pair erp riêng — staff SSH từ Bastion vào ERP/CRM
+  # bằng SSH Agent Forwarding (private key giữ trên máy local, không copy lên Bastion)
+  key_name = length(aws_key_pair.erp) > 0 ? aws_key_pair.erp[0].key_name : null
 
   # User data: cập nhật gói qua NAT Gateway
   user_data = base64encode(<<-USERDATA
@@ -326,8 +416,9 @@ resource "aws_instance" "rnd_2a" {
   # private subnet → traffic ra internet đi qua NAT Gateway (rt-rnd-private-2a)
   subnet_id              = var.rnd_subnet_2a_id
   vpc_security_group_ids = [var.sg_rnd_id]
-  key_name               = var.key_name != "" ? var.key_name : null
-  iam_instance_profile   = var.iam_instance_profile != "" ? var.iam_instance_profile : null
+  # R&D staff SSH trực tiếp vào EC2 R&D qua Client VPN (không qua Bastion)
+  key_name             = length(aws_key_pair.rnd) > 0 ? aws_key_pair.rnd[0].key_name : null
+  iam_instance_profile = var.iam_instance_profile != "" ? var.iam_instance_profile : null
 
   # User data: cập nhật gói cần thiết qua NAT Gateway
   user_data = base64encode(<<-USERDATA
@@ -353,8 +444,9 @@ resource "aws_instance" "rnd_2b" {
   # private subnet → traffic ra internet đi qua NAT Gateway (rt-rnd-private-2b)
   subnet_id              = var.rnd_subnet_2b_id
   vpc_security_group_ids = [var.sg_rnd_id]
-  key_name               = var.key_name != "" ? var.key_name : null
-  iam_instance_profile   = var.iam_instance_profile != "" ? var.iam_instance_profile : null
+  # R&D staff SSH trực tiếp vào EC2 R&D qua Client VPN (không qua Bastion)
+  key_name             = length(aws_key_pair.rnd) > 0 ? aws_key_pair.rnd[0].key_name : null
+  iam_instance_profile = var.iam_instance_profile != "" ? var.iam_instance_profile : null
 
   # User data: cập nhật gói cần thiết qua NAT Gateway
   user_data = base64encode(<<-USERDATA

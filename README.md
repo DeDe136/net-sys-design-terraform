@@ -672,6 +672,7 @@ terraform output tgw_id
 
 ```bash
 chmod +x scripts/generate_ovpn.sh
+sed -i 's/\r//' scripts/*.sh
 bash scripts/generate_ovpn.sh
 # Output: client-vpn.ovpn
 ```

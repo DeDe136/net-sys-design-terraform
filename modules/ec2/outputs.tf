@@ -27,3 +27,24 @@ output "rnd_instance_ids_2b" {
   description = "IDs of R&D EC2 instances in AZ-2b"
   value       = var.env == "rnd" ? aws_instance.rnd_2b[*].id : []
 }
+
+# ── Key pair names ────────────────────────────────────────────────
+output "bastion_key_name" {
+  description = "AWS Key Pair name của Bastion Host (dùng để SSH vào Bastion)"
+  value       = var.env == "prod" && length(aws_key_pair.bastion) > 0 ? aws_key_pair.bastion[0].key_name : null
+}
+
+output "web_key_name" {
+  description = "AWS Key Pair name của EC2 Web Portal (dùng SSH Agent Forwarding qua Bastion)"
+  value       = var.env == "prod" && length(aws_key_pair.web) > 0 ? aws_key_pair.web[0].key_name : null
+}
+
+output "erp_key_name" {
+  description = "AWS Key Pair name của EC2 ERP/CRM (dùng SSH Agent Forwarding qua Bastion)"
+  value       = var.env == "prod" && length(aws_key_pair.erp) > 0 ? aws_key_pair.erp[0].key_name : null
+}
+
+output "rnd_key_name" {
+  description = "AWS Key Pair name của EC2 R&D (R&D staff SSH trực tiếp qua Client VPN)"
+  value       = var.env == "rnd" && length(aws_key_pair.rnd) > 0 ? aws_key_pair.rnd[0].key_name : null
+}

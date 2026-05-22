@@ -61,6 +61,24 @@ output "s3_bucket_name" {
 output "s3_bucket_arn" {
   value = module.s3.bucket_arn
 }
+
+# ── SSH Key Pair Names ────────────────────────────────────────────
+output "bastion_key_name" {
+  description = "AWS Key Pair name Bastion — dùng: ssh -i ssh-keys/prod/bastion.pem ec2-user@<bastion_private_ip>"
+  value       = module.prod_ec2.bastion_key_name
+}
+output "web_key_name" {
+  description = "AWS Key Pair name Web Portal — dùng SSH Agent Forwarding qua Bastion"
+  value       = module.prod_ec2.web_key_name
+}
+output "erp_key_name" {
+  description = "AWS Key Pair name ERP/CRM — dùng SSH Agent Forwarding qua Bastion"
+  value       = module.prod_ec2.erp_key_name
+}
+output "rnd_key_name" {
+  description = "AWS Key Pair name R&D — dùng: ssh -i ssh-keys/rnd/rnd.pem ec2-user@<rnd_private_ip>"
+  value       = module.rnd_ec2.rnd_key_name
+}
 # ⚠ FIX: Comment out cùng với module "client_vpn" trong main.tf.
 # Terraform báo lỗi "Module not found" nếu output tham chiếu module
 # đang bị comment. Bỏ comment 2 output bên dưới SAU KHI enable VPN.

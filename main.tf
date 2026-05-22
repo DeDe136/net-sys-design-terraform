@@ -224,6 +224,12 @@ module "prod_ec2" {
 
   iam_instance_profile = var.ec2_instance_profile_name
 
+  # SSH Key Pairs — public key paths (private key lưu tại ssh-keys/prod/, gitignored)
+  # Chạy scripts/generate_ssh_keys.sh để sinh key pairs trước khi apply
+  bastion_public_key_path = var.bastion_public_key_path
+  web_public_key_path     = var.web_public_key_path
+  erp_public_key_path     = var.erp_public_key_path
+
   # Bastion Host — đặt ở Public Subnet (AZ-1a + AZ-1b)
   bastion_instance_type = var.ec2_instance_type
   bastion_subnet_1a_id  = module.prod_subnets.public_subnet_1a_id
@@ -252,7 +258,7 @@ module "prod_ec2" {
   asg_web_desired = var.asg_web_desired
   asg_erp_min     = var.asg_erp_min
   asg_erp_max     = var.asg_erp_max
-  asg_erp_desired = var.asg_erp_desired  # desired=1
+  asg_erp_desired = var.asg_erp_desired # desired=1
 }
 
 # ─────────────────────────────────────────────────────────────────
@@ -268,6 +274,10 @@ module "rnd_ec2" {
   instance_type = var.ec2_instance_type
 
   iam_instance_profile = var.ec2_instance_profile_name
+
+  # SSH Key Pair R&D — R&D staff SSH trực tiếp (không qua Bastion)
+  # Private key lưu tại ssh-keys/rnd/rnd.pem (gitignored)
+  rnd_public_key_path = var.rnd_public_key_path
 
   rnd_subnet_2a_id          = module.rnd_subnets.private_subnet_1a_id
   rnd_subnet_2b_id          = module.rnd_subnets.private_subnet_1b_id

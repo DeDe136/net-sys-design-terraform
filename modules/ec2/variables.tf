@@ -103,3 +103,41 @@ variable "rnd_instance_count_per_az" {
   default = 1
   description = "Number of R&D EC2 instances per AZ. Keep at 1 for dev/lab to stay within vCPU limits."
 }
+
+# ─────────────────────────────────────────────────────────────────
+# SSH Key Pair — Public key paths (tạo bên ngoài Terraform bằng ssh-keygen)
+#
+# Workflow:
+#   1. Chạy scripts/generate_ssh_keys.sh để sinh key pairs
+#   2. Private keys lưu tại ssh-keys/<env>/ (gitignored)
+#   3. Terraform đọc public key (.pub) từ đường dẫn dưới đây
+#
+# Luồng SSH:
+#   Staff → (SSM hoặc Client VPN) → Bastion
+#   Bastion --(bastion key)-→ EC2 Web/ERP (Staff dùng key web/erp, agent forwarding)
+#   R&D staff → Client VPN → EC2 R&D trực tiếp (không qua Bastion)
+# ─────────────────────────────────────────────────────────────────
+
+variable "bastion_public_key_path" {
+  type        = string
+  default     = ""
+  description = "Đường dẫn tới public key (.pub) của Bastion Host. Dùng để tạo aws_key_pair. Private key lưu tại ssh-keys/prod/bastion.pem (gitignored)."
+}
+
+variable "web_public_key_path" {
+  type        = string
+  default     = ""
+  description = "Đường dẫn tới public key (.pub) của EC2 Web Portal. Staff SSH vào Web qua Bastion dùng key này (agent forwarding). Private key lưu tại ssh-keys/prod/web.pem."
+}
+
+variable "erp_public_key_path" {
+  type        = string
+  default     = ""
+  description = "Đường dẫn tới public key (.pub) của EC2 ERP/CRM. Staff SSH vào ERP qua Bastion dùng key này (agent forwarding). Private key lưu tại ssh-keys/prod/erp.pem."
+}
+
+variable "rnd_public_key_path" {
+  type        = string
+  default     = ""
+  description = "Đường dẫn tới public key (.pub) của EC2 R&D. R&D staff SSH trực tiếp vào EC2 R&D (không qua Bastion). Private key lưu tại ssh-keys/rnd/rnd.pem."
+}
