@@ -24,61 +24,9 @@ Hạ tầng AWS multi-VPC triển khai bằng Terraform, theo kiến trúc enter
 
 ## 1. Tổng quan kiến trúc
 
-```
-Internet
-    │
-    ▼
-ALB (Internet-facing, public subnets AZ-1a + AZ-1b)
-    │  chỉ load balance EC2 Web Portal
-    ▼
-┌─────────────────────────────────────────────────────┐
-│ Production VPC  10.0.0.0/16                         │
-│                                                     │
-│  AZ-1a                        AZ-1b                 │
-│  ┌──────────────────┐  ┌──────────────────┐         │
-│  │ Public Subnet    │  │ Public Subnet    │         │
-│  │ NAT GW + ALB     │  │ NAT GW + ALB     │         │
-│  └────────┬─────────┘  └────────┬─────────┘         │
-│           │ (NAT outbound)      │                   │
-│  ┌────────▼─────────┐  ┌────────▼─────────┐         │
-│  │ Private Subnet   │  │ Private Subnet   │         │
-│  │ Bastion Host     │  │ Bastion Host     │         │
-│  │ EC2 Web Portal ◄─┼ALB│ EC2 Web Portal  │         │
-│  │ EC2 ERP/CRM ◄────┼Web│ EC2 ERP/CRM     │         │
-│  └──────────────────┘  └──────────────────┘         │
-│  ┌──────────────────┐  ┌──────────────────┐         │
-│  │ DB Subnet        │  │ DB Subnet        │         │
-│  │ Directory Svc    │  │ Directory Svc    │         │
-│  │ RDS Primary      │  │ RDS Standby      │         │
-│  └──────────────────┘  └──────────────────┘         │
-│                           ▲ TGW Attachment           │
-└───────────────────────────┼─────────────────────────┘
-                            │
-                   Transit Gateway
-                            │
-┌───────────────────────────┼─────────────────────────┐
-│ R&D VPC  10.1.0.0/16      │                         │
-│                           ▼ TGW Attachment           │
-│  AZ-2a                        AZ-2b                 │
-│  ┌──────────────────┐  ┌──────────────────┐         │
-│  │ Public Subnet    │  │ Public Subnet    │         │
-│  │ NAT GW           │  │ NAT GW           │         │
-│  └────────┬─────────┘  └────────┬─────────┘         │
-│           │ (NAT outbound)      │                   │
-│  ┌────────▼─────────┐  ┌────────▼─────────┐         │
-│  │ Private Subnet   │  │ Private Subnet   │         │
-│  │ 1x EC2 R&D       │  │ 1x EC2 R&D       │         │
-│  │ (mount EFS)      │  │ (mount EFS)      │         │
-│  └──────────────────┘  └──────────────────┘         │
-│                                                     │
-│              EFS Project Data                       │
-│              S3 Gateway Endpoint                    │
-└─────────────────────────────────────────────────────┘
-                            │
-                   Transit Gateway
-                            │
-                    Client VPN ◄── Remote Staff
-```
+![AWS Architecture](docs/images/AWS%20Architecture.png)
+
+*Sơ đồ kiến trúc AWS tổng thể (Production VPC, R&D VPC, Transit Gateway, Client VPN)*
 
 ### Thành phần chính
 
